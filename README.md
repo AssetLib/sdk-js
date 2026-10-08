@@ -59,15 +59,19 @@ See the [core guide](packages/sdk-core/README.md) for the checked-in catalog for
 
 ## Audit an existing app
 
-Clone this repository, use Node 22+, then install the locked workspace dependencies:
+The read-only audit is on npm as [`@assetlib/audit`](https://www.npmjs.com/package/@assetlib/audit). With Node 22+:
 
 ```sh
-npm ci
-npm run build
+npx -y @assetlib/audit@0.1.0 /path/to/app --assets assets --references src --json
+```
+
+Or from this checkout after `npm ci`:
+
+```sh
 node packages/audit/bin/assetlib-audit.mjs /path/to/app --assets assets --references src --json
 ```
 
-Select actual artwork and source folders. The audit does not upload, transform, or delete files. An unmatched literal reference is unresolved; it is not proof that an image is unused. [Audit scope and limits](packages/audit/README.md) · [Use the local agent skill](agent-kit/INSTALL.md)
+Select actual artwork and source folders. The audit does not upload, transform, or delete files. An unmatched literal reference is unresolved; it is not proof that an image is unused. [Audit scope and limits](packages/audit/README.md) · [Agent plugin and local skill](agent-kit/INSTALL.md)
 
 ## Reliability boundaries
 

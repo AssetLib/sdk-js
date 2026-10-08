@@ -2,9 +2,10 @@
 import { parseArgs } from 'node:util';
 import { auditAssets, formatReport } from '../src/audit.mjs';
 
-const help = `Usage: node packages/audit/bin/assetlib-audit.mjs <app-root> [options]
+const help = `Usage: assetlib-audit <app-root> [options]
+       npx -y @assetlib/audit@0.1.0 <app-root> [options]
 
-Read-only, local PNG/JPEG/WebP inventory. This package is not published.
+Read-only, local PNG/JPEG/WebP inventory.
 
   --json                    Print a deterministic JSON report to stdout
   --assets <path>           Restrict images to this file or directory, relative

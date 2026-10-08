@@ -1,28 +1,31 @@
-# Assetlib Audit — local pilot
+# Assetlib Audit
 
-A small, read-only entry point for investigating an existing app's raster assets before choosing a migration. It measures evidence; it does not decide what can be deleted or safely served remotely.
+A small, read-only command for inventorying an existing app's raster artwork before choosing a migration. It measures evidence; it does not decide what can be deleted or safely served remotely.
 
-This MIT-licensed source utility is runnable from this checkout. It has **not been published to npm** or registered in a marketplace. Use the repository entry point rather than an unverified `npx @assetlib/audit` command.
+Distributed on npm as [`@assetlib/audit`](https://www.npmjs.com/package/@assetlib/audit) under the MIT license. Source lives in [AssetLib/sdk-js](https://github.com/AssetLib/sdk-js/tree/main/packages/audit). The same command powers the `assetlib-audit` plugin for Claude Code and Codex in [AssetLib/agent-plugins](https://github.com/AssetLib/agent-plugins).
 
 ## Run
 
-Requires Node.js 22 or later. From the Assetlib repository:
+Requires Node.js 22 or later. Pin the exact version so results are reproducible:
+
+```sh
+npx -y @assetlib/audit@0.1.0 /path/to/your-app
+npx -y @assetlib/audit@0.1.0 /path/to/your-app --references src --json
+npx -y @assetlib/audit@0.1.0 /path/to/your-app --assets public --references src
+npx -y @assetlib/audit@0.1.0 /path/to/your-app --long-edge 2048 --max-files 500
+```
+
+The first run downloads the package and its one dependency from the npm registry. **The audit itself has no network calls, telemetry, account, upload, transforms, deletion, or source rewrites.** Reports go to stdout. If you choose shell redirection to save a report, use a destination that will not overwrite an existing file.
+
+From a clone of this repository instead:
 
 ```sh
 npm ci
-node packages/audit/bin/assetlib-audit.mjs /path/to/your-app
 node packages/audit/bin/assetlib-audit.mjs /path/to/your-app --references src --json
-node packages/audit/bin/assetlib-audit.mjs /path/to/your-app --assets public --references src
-node packages/audit/bin/assetlib-audit.mjs /path/to/your-app --long-edge 2048 --max-files 500
-```
-
-Try the included synthetic sample, with two identical PNGs and one tall PNG:
-
-```sh
 node packages/audit/bin/assetlib-audit.mjs packages/audit/examples/sample-app --references src
 ```
 
-Dependency installation uses npm and therefore the network. **The audit itself has no network calls, telemetry, account, upload, transforms, deletion, or source rewrites.** Reports go to stdout. If you choose shell redirection to save a report, use a destination that will not overwrite an existing file.
+The included synthetic sample has two identical PNGs and one tall PNG.
 
 `--assets` is optional and repeatable: select known artwork files/directories to avoid mixing QA screenshots, documentation images, or unrelated media into the inventory. Source references can still be examined elsewhere inside the same app root. Without `--assets`, the whole root is the image scope.
 
@@ -60,7 +63,7 @@ Each directory's names are read and sorted before processing; the entry limit bo
 ## Programmatic use and checks
 
 ```js
-import { auditAssets } from './packages/audit/src/audit.mjs';
+import { auditAssets } from '@assetlib/audit';
 
 const report = await auditAssets('/path/to/app', {
   assets: ['public'],
@@ -74,4 +77,14 @@ const report = await auditAssets('/path/to/app', {
 npm test --workspace @assetlib/audit
 ```
 
-Tests create synthetic PNG artwork in temporary directories and remove the fixtures afterwards. They check evidence, duplicates, scoped reference locations, partial coverage, symlinks, deterministic output, CLI exit codes, and preservation of audited files. The CLI is an early local tool; it is not a hosted Assetlib MVP or an installable mobile SDK.
+Tests create synthetic PNG artwork in temporary directories and remove the fixtures afterwards. They check evidence, duplicates, scoped reference locations, partial coverage, symlinks, deterministic output, CLI exit codes, and preservation of audited files. The CLI is an early local tool; it is not a hosted Assetlib service or an installable mobile SDK.
+
+## Releasing
+
+Maintainers publish from a clean checkout after `npm run verify` passes:
+
+```sh
+npm publish --workspace @assetlib/audit
+```
+
+Bump `version` here and the pinned `npx` version in this README, the CLI help text, and the `assetlib-audit` plugin skill together.

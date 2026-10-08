@@ -1,4 +1,7 @@
 interface:
   display_name: "Assetlib asset audit"
-  short_description: "Audit local assets and plan a bounded migration"
-  default_prompt: "Use $assetlib-audit to inspect this app's images and propose a small migration with bundled fallbacks."
+  short_description: "Inventory app images and plan a bounded artwork migration"
+  brand_color: "#202820"
+  default_prompt: "Use $assetlib-audit to inventory this app's images and propose a small artwork migration that keeps bundled fallbacks."
+policy:
+  allow_implicit_invocation: true

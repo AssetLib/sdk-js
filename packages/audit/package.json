@@ -1,20 +1,21 @@
 {
   "name": "@assetlib/audit",
   "version": "0.1.0",
-  "private": true,
-  "description": "Local, read-only evidence for an app asset migration.",
+  "description": "Read-only local inventory of PNG, JPEG, and WebP assets in an existing app: measured bytes, exact duplicates, dimension candidates, and literal-reference hints. No account, network, uploads, or source changes.",
+  "license": "MIT",
   "type": "module",
   "engines": {
     "node": ">=22"
   },
   "bin": {
-    "assetlib-audit": "./bin/assetlib-audit.mjs"
+    "assetlib-audit": "bin/assetlib-audit.mjs"
   },
   "exports": "./src/audit.mjs",
   "files": [
     "bin",
     "src",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "test": "node --test",
@@ -23,5 +24,29 @@
   "dependencies": {
     "image-size": "2.0.4"
   },
-  "license": "MIT"
+  "publishConfig": {
+    "access": "public",
+    "provenance": false
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AssetLib/sdk-js.git",
+    "directory": "packages/audit"
+  },
+  "homepage": "https://github.com/AssetLib/sdk-js/tree/main/packages/audit#readme",
+  "bugs": {
+    "url": "https://github.com/AssetLib/sdk-js/issues"
+  },
+  "keywords": [
+    "assets",
+    "images",
+    "audit",
+    "duplicates",
+    "mobile",
+    "react-native",
+    "expo",
+    "ios",
+    "android",
+    "cli"
+  ]
 }

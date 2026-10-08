@@ -8,7 +8,7 @@ const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const output = path.join(root, 'release');
 await mkdir(output, { recursive: true });
 const sums = [];
-for (const name of ['sdk-core', 'sdk-expo']) {
+for (const name of ['sdk-core', 'sdk-expo', 'audit']) {
   const result = JSON.parse(execFileSync('npm', ['pack', '--json', '--pack-destination', output], { cwd: path.join(root, 'packages', name), encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] }));
   const pack = result[0];
   const bytes = await readFile(path.join(output, pack.filename));
@@ -16,4 +16,4 @@ for (const name of ['sdk-core', 'sdk-expo']) {
   console.log(`${pack.filename}: ${bytes.length} bytes`);
 }
 await writeFile(path.join(output, 'SHA256SUMS'), sums.join('\n') + '\n');
-console.log('Release tarballs and SHA256SUMS are in release/. Nothing was published.');
+console.log('Release tarballs and SHA256SUMS are in release/. Nothing was published; see each package README for the npm publish step.');

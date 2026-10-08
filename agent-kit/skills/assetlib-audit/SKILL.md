@@ -1,37 +1,43 @@
 ---
 name: assetlib-audit
-description: Audit PNG, JPEG, and WebP assets in an existing application with Assetlib's local CLI, explain duplicate and dimension evidence, and propose a small migration that preserves bundled fallbacks. Use for asset inventory or migration assessment; this preview does not install a delivery SDK or publish assets.
+description: Inventory PNG, JPEG, and WebP artwork in an existing app with Assetlib's read-only local command, explain duplicate and dimension evidence, and propose a small artwork migration that keeps bundled fallbacks. Use when asked to audit, inventory, dedupe, or shrink app images, or to assess moving artwork to remote delivery. Not for deleting files, uploading assets, or installing a delivery SDK.
 ---
 
 # Assetlib asset audit
 
-Use the deterministic local audit before drawing conclusions about asset cleanup. Preserve the user's repository and their chosen framework. Do not upload files or assume that an SDK, hosted account, or public npm package exists.
+Run the deterministic local audit before drawing conclusions about an app's artwork. Preserve the user's repository and framework. The audit reads files and prints a report; it never uploads, transforms, deletes, or rewrites anything.
 
-## Locate and run
+## Run
 
-This skill ships in an Assetlib source checkout. Locate `packages/audit/package.json` relative to the supplied checkout root; when reading this file in its original location, the root is three directories above this skill folder. If the skill was copied separately, obtain the checkout path from task context or ask for it. Do not substitute an unverified registry package.
-
-Read the CLI's `--help` and package README. With Node 22+ and dependencies installed, the supported entry point is:
+Requires Node.js 22 or later. Use the pinned package so results are reproducible:
 
 ```sh
-node <assetlib-checkout>/packages/audit/bin/assetlib-audit.mjs <app-root> --json
+npx -y @assetlib/audit@0.1.0 <app-root> --json
 ```
 
-Use `--assets` to select known artwork folders when a repository also contains screenshots or documentation media; those files must not silently count as shipped artwork. Use the documented reference-scanning option only for relevant source directories. Dependency installation is separate from offline execution: if needed, use the checkout's lockfile with `npm ci --prefix <sdk-js-checkout>`. Treat installation as code execution under the user's existing authorization, not as a hidden part of reading a report.
+The first run fetches `@assetlib/audit` and its single dependency from the npm registry. Say so before running if network use matters to the user. The audit itself makes no network calls. If a clone of https://github.com/AssetLib/sdk-js is available, `node <checkout>/packages/audit/bin/assetlib-audit.mjs <app-root> --json` runs the same code without a registry fetch. Do not substitute a different package or an unpinned version.
 
-Choose bounded limits appropriate to the repository. Inspect report coverage and warnings before interpreting findings. A partial scan supports only conclusions about the scanned subset. Do not print source-file contents, credentials, or full targeting profiles in the report.
+Read `--help` for the full option list, then choose scope deliberately:
+
+- `--assets <path>`, repeatable, restricts images to known artwork folders so screenshots, documentation media, and test fixtures are not counted as shipped artwork.
+- `--references <path>`, repeatable, opts into scanning quoted filename literals in a source directory. Keep it narrow.
+- `--long-edge`, `--max-files`, `--max-entries`, `--max-file-bytes`, and `--max-bytes` bound the scan.
+
+Exit code 0 means the declared scope completed. Exit code 2 means coverage is partial and the report is valid only for the scanned subset. Exit code 1 means invalid input. Inspect `coverage`, `skipped`, and `issues` in the JSON before interpreting findings. Do not print source-file contents, credentials, or absolute paths from the user's machine in your summary.
 
 ## Interpret evidence
 
-- Exact SHA-256 matches establish duplicate file bytes, not interchangeable runtime references or safely reclaimable application-bundle bytes.
+- Exact SHA-256 matches establish duplicate file bytes, not interchangeable runtime references or reclaimable application-bundle bytes.
 - Long-edge thresholds flag dimension candidates. Actual excess size requires the intended rendered dimensions, density, crop, quality, and target build output.
-- Literal matches are hints with file/line evidence, not framework-aware reachability or screen discovery. No match is unresolved, never proof of unused content.
-- Retain icons needed for navigation, launch, error handling, accessibility, and offline use unless the user has a specific migration reason. App icons, native symbols, font glyphs, asset-catalog variants, nine-patch resources, and adaptive icons need platform-specific handling beyond this CLI.
+- Literal matches are hints with file and line evidence, not framework-aware reachability or screen discovery. No match means unresolved, never proof of unused content.
+- Keep icons needed for navigation, launch, error handling, accessibility, and offline use bundled unless the user has a specific migration reason. App icons, native symbols, font glyphs, asset-catalog variants, nine-patch resources, and adaptive icons need platform-specific handling beyond this command.
 
-Return a compact explanation with measured bytes/counts, duplicate groups, dimension candidates, reference coverage, and uncertainties. Separate inventory size from bundle-size savings. Recommend at most a few high-value artwork placements for the first migration and preserve their current resources as fallbacks.
+## Report
 
-## Migration boundary
+Return a compact explanation: counts and bytes, duplicate groups, dimension candidates, reference coverage, and uncertainties. Separate on-disk bytes from bundle-size savings. Recommend at most a few high-value artwork placements for a first migration and keep their current files as fallbacks. Recommending no migration is a valid outcome.
 
-This preview only audits. If the user asks to integrate Assetlib, inspect the actual available SDK and its version-matched documentation first. Do not invent imports, package names, API keys, an MCP server, or installation success. If no SDK is present, produce a concrete proposed diff/placement plan and state what remains unimplemented.
+## Boundaries
 
-When a supported SDK exists, prefer an opt-in change to selected image call sites, generated typed placement references, and a reviewable diff. A future migration must preserve an offline fallback and verify behavior in the actual target runtime. Never make reference cleanup, deletion, publishing, analytics enablement, or a repository-wide rewrite an implicit side effect of an audit.
+This skill only audits. If the user asks to integrate Assetlib delivery, inspect the actual SDK available in their project and its version-matched documentation first. Do not invent imports, package names, API keys, an MCP server, or installation success. If no SDK is present, produce a concrete proposed placement plan and state what remains unimplemented.
+
+When a supported SDK exists, prefer an opt-in change to selected image call sites, generated typed placement references, and a reviewable diff. A migration must preserve an offline fallback and be verified in the actual target runtime. Never make cleanup, deletion, publishing, analytics enablement, or a repository-wide rewrite an implicit side effect of an audit.
