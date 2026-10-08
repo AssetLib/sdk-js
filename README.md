@@ -2,6 +2,14 @@
 
 Signed app artwork delivery with typed placement references and bundled fallbacks. This MIT-licensed preview includes the delivery client, an Expo adapter for iOS/Android/web, and a local asset audit.
 
+Try the hosted developer preview:
+
+- [Assetlib console](https://assetlib-console.vercel.app) — sign in with GitHub and create a workspace with original demo artwork.
+- [Travel demo](https://assetlib-travel.vercel.app) — browse the app, then connect your workspace to update its travel images.
+- [Todo demo](https://assetlib-todo.vercel.app) — try the same release workflow with a task illustration.
+
+Copy the public SDK configuration from the console into a demo’s **Connect** screen. Publish a compatible image change, then refresh assets in the running demo; try rollback to restore earlier artwork. Published images are public. These links open web demos; native-device validation is separate.
+
 | Package | What works in this preview |
 | --- | --- |
 | [`@assetlib/sdk-core`](packages/sdk-core) | Pinned Ed25519 manifest verification, SHA-256 image checks, durable sequence tracking, compatible cached fallback, local catalog code generation |
