@@ -26,6 +26,8 @@ await client.refresh(); // Explicit network check.
   asset={AppAssets.Travel.coast}
   fallback={require('./assets/coast.png')}
   revision={refreshCounter}
+  pixelWidth={600}
+  pixelHeight={450}
   style={{ width: '100%', aspectRatio: 4 / 3 }}
   contentFit="cover"
   onStatus={(status) => console.log(status.source, status.sequence)}
@@ -34,7 +36,7 @@ await client.refresh(); // Explicit network check.
 
 Create a long-lived client outside repeated renders. After an explicit `refresh()`, increment `revision` to request the current artwork. `AssetlibImage` initially displays the bundled fallback, then a verified local image. A native/browser image decode error returns to the bundled image. Supply a stable `fallback` value, such as React Native's numeric `require()` result.
 
-`onStatus` reports source selection and verification, not a user impression or proof that the image was visible. Do not send experiment exposure events from this callback. App layout, accessibility labels, image sizing, and refresh policy remain app-owned. Rendering uses `expo-image` for downloaded WebP support on iOS and Android; props follow Expo Image. Its separate disk cache is disabled because Assetlib owns the verified byte cache.
+`onStatus` reports source selection and verification, not a user impression or proof that the image was visible. Do not send experiment exposure events from this callback. App layout, accessibility labels, image sizing, and refresh policy remain app-owned. Rendering uses `expo-image` for downloaded PNG/WebP support on iOS and Android; props follow Expo Image. Its separate disk cache is disabled because Assetlib owns the verified byte cache.
 
 ## Storage and networking
 
@@ -42,7 +44,7 @@ Native uses the maintained Expo `File`, `Directory`, and `Paths` APIs, with priv
 
 Caches are isolated by delivery URL, organization, app, environment, and pinned key. Image storage is bounded to 50 MiB / 100 entries per configuration; the core retains eight signed releases. Cached content is rehashed. A missing cache resolves to the bundled fallback. Corrupt release state fails closed rather than resetting the stored sequence.
 
-There is no automatic app-data reset API: disconnect the client to show bundled artwork while retaining the cache. Explicitly clearing app/browser data removes stored replay protection. Multiple native clients are serialized within one JavaScript process; cross-process synchronization is outside this preview's contract. Remote images are currently WebP only and require exact generated placement dimensions. See the core README for signature, timeout, body-size, and compatibility limits.
+There is no automatic app-data reset API: disconnect the client to show bundled artwork while retaining the cache. Explicitly clearing app/browser data removes stored replay protection. Multiple native clients are serialized within one JavaScript process; cross-process synchronization is outside this preview's contract. Preview 0.2 supports PNG/WebP renditions selected by explicit pixel size. Logical placement dimensions still match the generated catalog. Native caches preserve compatibility with existing `.webp` entries. Web can opt into normalized SVG with `createExpoAssetClient(config, { allowVector: true })`; enabling that option on native throws. Native SVG, PDF and animated delivery are not implemented. Browser rendering checks decoded dimensions before handing the image to Expo; native Expo decode errors fall back to the bundled image. See the core README for signature, timeout, body-size, and compatibility limits.
 
 ## Validation
 

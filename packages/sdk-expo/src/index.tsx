@@ -1,18 +1,19 @@
 import { useEffect, useRef, useState } from 'react';
 import { Image, type ImageProps } from 'expo-image';
 import { createAssetClient, parsePublicConfig, type AssetClient, type AssetlibConfig, type AssetRef, type AssetStatus } from '@assetlib/sdk-core';
-import { createPlatformStorage, imageUri, platformFetch } from './platform';
+import { createPlatformStorage, imageUri, platformFetch, vectorRenderingSupported } from './platform';
 import type { ImageUri } from './shared';
 export type { AssetClient, AssetlibConfig, AssetRef, AssetStatus, ClientStatus, RefreshResult } from '@assetlib/sdk-core';
 
-export function createExpoAssetClient(config: AssetlibConfig, options: { allowInsecureLoopback?: boolean; timeoutMs?: number } = {}): AssetClient {
+export function createExpoAssetClient(config: AssetlibConfig, options: { allowInsecureLoopback?: boolean; timeoutMs?: number; allowVector?: boolean } = {}): AssetClient {
   const validated = parsePublicConfig(config, options);
-  return createAssetClient(validated, { ...options, storage: createPlatformStorage(validated), fetch: platformFetch });
+  if (options.allowVector && !vectorRenderingSupported) throw new Error('SVG delivery is supported only by the browser adapter.');
+  return createAssetClient(validated, { ...options, formats: options.allowVector ? ['image/webp', 'image/png', 'image/svg+xml'] : ['image/webp', 'image/png'], storage: createPlatformStorage(validated), fetch: platformFetch });
 }
 
-export type AssetlibImageProps = Omit<ImageProps, 'source'> & { client: AssetClient; asset: AssetRef; fallback: NonNullable<ImageProps['source']>; revision?: number; onStatus?: (status: AssetStatus) => void };
+export type AssetlibImageProps = Omit<ImageProps, 'source'> & { client: AssetClient; asset: AssetRef; fallback: NonNullable<ImageProps['source']>; revision?: number; pixelWidth?: number; pixelHeight?: number; onStatus?: (status: AssetStatus) => void };
 
-export function AssetlibImage({ client, asset, fallback, revision = 0, onStatus, onError, ...props }: AssetlibImageProps) {
+export function AssetlibImage({ client, asset, fallback, revision = 0, pixelWidth, pixelHeight, onStatus, onError, ...props }: AssetlibImageProps) {
   const [source, setSource] = useState<NonNullable<ImageProps['source']>>(fallback);
   const callbacks = useRef({ onStatus, onError });
   callbacks.current = { onStatus, onError };
@@ -23,7 +24,7 @@ export function AssetlibImage({ client, asset, fallback, revision = 0, onStatus,
     // Each resolution starts with a guaranteed bundled source, including client switches.
     setSource(fallback);
     callbacks.current.onStatus?.({ source: 'bundle', sequence: null, message: 'Bundled artwork is ready while the placement resolves.' });
-    client.resolve(asset).then(async result => {
+    client.resolve(asset, pixelWidth === undefined && pixelHeight === undefined ? {} : { pixelWidth, pixelHeight }).then(async result => {
       if (!active) return;
       if (result.bytes) {
         localUri = await imageUri(client.config, result);
@@ -39,7 +40,7 @@ export function AssetlibImage({ client, asset, fallback, revision = 0, onStatus,
       callbacks.current.onStatus?.({ source: 'bundle', sequence: null, message: 'Using bundled artwork because the verified image could not be loaded.' });
     });
     return () => { active = false; localUri?.release(); if (currentUri.current === localUri) currentUri.current = null; };
-  }, [client, asset.key, asset.width, asset.height, fallback, revision]);
+  }, [client, asset.key, asset.width, asset.height, fallback, revision, pixelWidth, pixelHeight]);
 
   return <Image {...props} cachePolicy="none" source={source} onError={event => {
     setSource(fallback);

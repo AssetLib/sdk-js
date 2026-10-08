@@ -1,5 +1,6 @@
 import { SDK_LIMITS, type AssetlibConfig, type AssetStorage, type ResolvedAsset } from '@assetlib/sdk-core';
 import { namespace, validateCacheKey, type ImageUri } from './shared';
+export const vectorRenderingSupported = true;
 export const platformFetch: typeof globalThis.fetch = (...args) => globalThis.fetch(...args);
 
 function database(config: AssetlibConfig): Promise<IDBDatabase> {
@@ -60,6 +61,20 @@ export function createPlatformStorage(config: AssetlibConfig): AssetStorage {
 }
 export async function imageUri(_config: AssetlibConfig, result: ResolvedAsset): Promise<ImageUri> {
   if (!result.bytes) throw new Error('Missing verified image bytes.');
-  const uri = URL.createObjectURL(new Blob([result.bytes.slice().buffer as ArrayBuffer], { type: 'image/webp' }));
-  return { uri, release: () => URL.revokeObjectURL(uri) };
+  const uri = URL.createObjectURL(new Blob([result.bytes.slice().buffer as ArrayBuffer], { type: result.mime ?? 'image/webp' }));
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const image = new globalThis.Image();
+      const timer = setTimeout(() => { image.onload = image.onerror = null; image.src = ''; reject(new Error('Image decoding exceeded its deadline.')); }, 8000);
+      image.onload = () => {
+        clearTimeout(timer);
+        const valid = image.naturalWidth > 0 && image.naturalHeight > 0 && image.naturalWidth <= 8192 && image.naturalHeight <= 8192 && image.naturalWidth * image.naturalHeight <= 16777216 &&
+          (result.pixelWidth === undefined || (image.naturalWidth === result.pixelWidth && image.naturalHeight === result.pixelHeight));
+        valid ? resolve() : reject(new Error('Decoded image dimensions do not match the signed rendition.'));
+      };
+      image.onerror = () => { clearTimeout(timer); reject(new Error('The verified image could not be decoded.')); };
+      image.src = uri;
+    });
+    return { uri, release: () => URL.revokeObjectURL(uri) };
+  } catch (error) { URL.revokeObjectURL(uri); throw error; }
 }

@@ -14,13 +14,21 @@ const config = parsePublicConfig(publicConfig);
 const client = createAssetClient(config, { storage: durableStorage });
 await client.initialize(); // Verify persisted state; no network request.
 const release = await client.refresh(); // Fetch and verify the manifest.
-const asset = await client.resolve(AppAssets.Travel.coast); // Download on demand.
+const asset = await client.resolve(AppAssets.Travel.coast, { pixelWidth: 600, pixelHeight: 450 });
 // source is 'remote', 'cache', or 'bundle'. Render a bundled image for 'bundle'.
 ```
 
-`refresh()` returns `{ updated, sequence, error? }`. Errors preserve the previous accepted release. `resolve()` returns `{ source, sequence, message, bytes?, sha256?, assetId?, mime? }`. `getStatus()` returns `{ initialized, sequence, lastError }`. Use one long-lived client per configured app.
+`refresh()` returns `{ updated, sequence, error? }`. Errors preserve the previous accepted release. `resolve()` returns `{ source, sequence, message, bytes?, sha256?, assetId?, mime?, pixelWidth?, pixelHeight? }`. `getStatus()` returns `{ initialized, sequence, lastError }`. Use one long-lived client per configured app.
 
 Public config: `{ schemaVersion: 1, orgId, appId, environment: 'production', manifestUrl, pinnedPublicKey, keyId? }`. The PEM Ed25519 public key must come from a trusted provisioning step independent of the delivery response. Public config contains no admin credentials. Importing it from an untrusted source changes the trust anchor; verification cannot establish that the source belongs to your organization.
+
+## Image formats and sizes
+
+Preview 0.2 accepts the optional signed `renditionSchemaVersion: 1` extension. Existing schema-1 manifests still work; older clients can use the mandatory WebP fallback in new manifests. By default, the client selects PNG or WebP. Ask for physical pixels with both `pixelWidth` and `pixelHeight`; without a target, selection uses the generated placement dimensions. Layout and display density remain the application's responsibility.
+
+Selection uses the smallest rendition covering both dimensions, then byte size and hash. If every rendition is smaller, the largest is preferred. Failed candidates advance to the next candidate, then the legacy fallback. Historical releases remain cache-only. The result describes the actual selected MIME, hash and pixel dimensions. It does not convert one format into another on the device.
+
+A browser renderer can opt into normalized SVG with `formats: ['image/webp', 'image/png', 'image/svg+xml']`. SVG is then preferred. Generic/native clients should retain the raster defaults. The core validates signed metadata, hash, byte length and basic headers; adapters must decode images and verify dimensions before rendering. The Expo web adapter performs browser decoding, while the standalone Swift/Kotlin SDKs use native decoders.
 
 ## Offline typed references
 
@@ -52,7 +60,7 @@ Use `AppAssets.Travel.coast` in application code. Existing compatible artwork up
 - A failed current image resolves to a compatible cached image from the retained release history, then to the app's bundled fallback. Older releases never cause a new download. Eviction or more than eight accepted releases can remove a previous fallback.
 - Cache bytes are rehashed before use. The supplied adapters bound image storage to 50 MiB and 100 entries per configuration. Persistence is required before activating a new release. Corrupt replay state fails closed; it is not automatically discarded.
 
-Clearing app data, uninstalling the app, browser storage eviction, or changing the trust configuration resets local replay protection. This preview does not claim protection against a compromised device or browser. Storage adapters must enforce atomic, nondecreasing state replacement. No background refresh, resumeable download, compression negotiation, usage telemetry, image-render exposure events, experiment assignment, or cryptographic key rotation is implemented. Rendering support is supplied by the platform; a valid hash does not prove an image is decodable.
+Clearing app data, uninstalling the app, browser storage eviction, or changing the trust configuration resets local replay protection. This preview does not claim protection against a compromised device or browser. Storage adapters must enforce atomic, nondecreasing state replacement. No background refresh, resumable download, HTTP content negotiation, usage telemetry, image-render exposure events, experiment assignment, or cryptographic key rotation is implemented. Rendering support is supplied by the platform; a valid hash does not prove an image is decodable.
 
 ## Development
 
@@ -62,4 +70,4 @@ npm test
 npm pack
 ```
 
-Tests use real Node Ed25519 signatures and bounded mock delivery streams. They cover signature and byte tampering, independent pins, replay across client restarts, corrupt storage, offline cache fallback, contract mismatch, URL boundaries, deadlines, and offline code generation. The npm pack contains built JavaScript and declarations; it does not require TypeScript compilation when installed.
+Tests include the shared cross-platform rendition contract corpus, selection, PNG/SVG bytes and offline fallback, plus real Node Ed25519 signatures and bounded mock delivery streams. They cover signature and byte tampering, independent pins, replay across client restarts, corrupt storage, offline cache fallback, contract mismatch, URL boundaries, deadlines, and offline code generation. The npm pack contains built JavaScript and declarations; it does not require TypeScript compilation when installed.

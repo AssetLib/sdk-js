@@ -2,8 +2,10 @@ import { ed25519 } from '@noble/curves/ed25519.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 import { base64 } from '@scure/base';
-import type { AssetlibConfig, AssetRef, ClientOptions, ClientStatus, ManifestPayload, ManifestSlot, RefreshResult, ResolvedAsset, SignedManifest } from './types.js';
+import type { AssetlibConfig, AssetMime, AssetRef, ClientOptions, ClientStatus, ManifestPayload, RefreshResult, ResolvedAsset, ResolveOptions, SignedManifest } from './types.js';
 export type * from './types.js';
+import { selectAssetCandidates, supportedFormats, targetPixels, validRenditionHeader, validateRenditions, type AssetCandidate } from './renditions.js';
+export { selectAssetCandidates } from './renditions.js';
 
 export const SDK_LIMITS = Object.freeze({ manifestBytes: 256 * 1024, assetBytes: 8 * 1024 * 1024, slots: 100, retainedReleases: 8, stateBytes: 3 * 1024 * 1024, cacheBytes: 50 * 1024 * 1024, cacheEntries: 100 });
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
@@ -44,17 +46,18 @@ export function verifySignedManifest(input: unknown, config: AssetlibConfig): { 
     if (!record(value) || !validKey(value.key) || keys.has(value.key) || typeof value.screen !== 'string' || value.screen.length > 120 || !integer(value.width, 1, 8192) || !integer(value.height, 1, 8192) || typeof value.assetId !== 'string' || !uuid.test(value.assetId) || typeof value.sha256 !== 'string' || !hashPattern.test(value.sha256) || value.mime !== 'image/webp' || !integer(value.bytes, 1, SDK_LIMITS.assetBytes) || typeof value.url !== 'string') return fail('Invalid or unsupported placement in manifest.');
     const url = new URL(value.url, config.manifestUrl);
     if (url.origin !== new URL(config.manifestUrl).origin || url.username || url.password || url.search || url.hash || url.pathname !== `/api/delivery/${config.orgId}/${config.appId}/assets/${value.assetId}`) return fail('Asset URL is outside the configured app.');
+    validateRenditions(payload, value, config);
     keys.add(value.key);
   }
   return { envelope: input as SignedManifest, payload: payload as ManifestPayload };
 }
 
-async function fetchBounded(fetcher: typeof fetch, url: string, maxBytes: number, timeoutMs: number): Promise<Uint8Array> {
+async function fetchBounded(fetcher: typeof fetch, url: string, maxBytes: number, timeoutMs: number, accept = 'image/webp'): Promise<Uint8Array> {
   const controller = new AbortController();
   let timeout: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<never>((_, reject) => { timeout = setTimeout(() => { controller.abort(); reject(new Error('Assetlib request timed out.')); }, timeoutMs); });
   const request = async () => {
-    const response = await fetcher(url, { method: 'GET', credentials: 'omit', redirect: 'error', signal: controller.signal, headers: { Accept: url.endsWith('/manifest') ? 'application/json' : 'image/webp' } });
+    const response = await fetcher(url, { method: 'GET', credentials: 'omit', redirect: 'error', signal: controller.signal, headers: { Accept: url.endsWith('/manifest') ? 'application/json' : accept } });
     if (!response.ok || response.redirected) throw new Error(`Assetlib delivery returned ${response.status}.`);
     const declared = response.headers.get('content-length');
     if (declared && (!/^\d+$/.test(declared) || Number(declared) > maxBytes)) throw new Error('Response exceeds the SDK byte limit.');
@@ -92,8 +95,10 @@ export class AssetClient {
   private queue: Promise<unknown> = Promise.resolve();
   private timeoutMs: number;
   private fetcher: typeof fetch;
+  private formats: readonly AssetMime[];
   constructor(config: AssetlibConfig, private options: ClientOptions) {
     this.config = parsePublicConfig(config, options);
+    this.formats = supportedFormats(options.formats);
     this.timeoutMs = options.timeoutMs ?? 8000;
     if (!integer(this.timeoutMs, 20, 30000)) fail('timeoutMs must be between 20 and 30000.');
     this.fetcher = options.fetch ?? globalThis.fetch;
@@ -154,31 +159,36 @@ export class AssetClient {
       }
     });
   }
-  resolve(ref: AssetRef): Promise<ResolvedAsset> {
+  resolve(ref: AssetRef, options: ResolveOptions = {}): Promise<ResolvedAsset> {
     return this.serial(async () => {
       await this.load();
       if (!validKey(ref.key) || !integer(ref.width, 1, 8192) || !integer(ref.height, 1, 8192)) throw new Error('Invalid generated asset reference.');
+      const target = targetPixels(ref, options);
       let message = this.storageFailure ?? 'No compatible published artwork is available.';
       for (let index = 0; index < this.state.history.length; index++) {
         const { payload } = verifySignedManifest(this.state.history[index], this.config);
         const slot = payload.slots.find(item => item.key === ref.key && item.width === ref.width && item.height === ref.height);
         if (!slot) continue;
-        try {
-          const cached = await this.options.storage.getAsset(slot.sha256);
-          if (cached && this.validBytes(cached, slot)) return { source: 'cache', sequence: payload.sequence, message: index ? `Using verified artwork from release ${payload.sequence}. ${message}` : 'Verified artwork loaded from the local cache.', bytes: cached, mime: 'image/webp', sha256: slot.sha256, assetId: slot.assetId };
-          // Only the current release may cause a download. Older retained releases are cache-only fallbacks.
-          if (index !== 0) continue;
-          const bytes = await fetchBounded(this.fetcher, new URL(slot.url, this.config.manifestUrl).href, slot.bytes, this.timeoutMs);
-          if (!this.validBytes(bytes, slot)) throw new Error('Asset bytes do not match the signed manifest.');
-          await this.options.storage.putAsset(slot.sha256, bytes);
-          return { source: 'remote', sequence: payload.sequence, message: 'Downloaded artwork; signature and file hash verified.', bytes, mime: 'image/webp', sha256: slot.sha256, assetId: slot.assetId };
-        } catch (error) { message = error instanceof Error ? error.message : 'Artwork could not be loaded.'; }
+        for (const candidate of selectAssetCandidates(slot, target, this.formats)) {
+          const identity = { mime: candidate.mime, sha256: candidate.sha256, assetId: slot.assetId,
+            ...(candidate.isRendition ? { pixelWidth: candidate.width, pixelHeight: candidate.height } : {}) };
+          try {
+            const cached = await this.options.storage.getAsset(candidate.sha256);
+            if (cached && this.validBytes(cached, candidate)) return { source: 'cache', sequence: payload.sequence, message: index ? `Using verified artwork from release ${payload.sequence}. ${message}` : 'Verified artwork loaded from the local cache.', bytes: cached, ...identity };
+            // Historical releases never trigger downloads, even if a preferred size is missing.
+            if (index !== 0) continue;
+            const bytes = await fetchBounded(this.fetcher, new URL(candidate.url, this.config.manifestUrl).href, candidate.bytes, this.timeoutMs, candidate.mime);
+            if (!this.validBytes(bytes, candidate)) throw new Error('Asset bytes do not match the signed manifest.');
+            await this.options.storage.putAsset(candidate.sha256, bytes, candidate.mime);
+            return { source: 'remote', sequence: payload.sequence, message: 'Downloaded artwork; signature and file hash verified.', bytes, ...identity };
+          } catch (error) { message = error instanceof Error ? error.message : 'Artwork could not be loaded.'; }
+        }
       }
       return { source: 'bundle', sequence: null, message: `Using bundled artwork. ${message}` };
     });
   }
-  private validBytes(bytes: Uint8Array, slot: ManifestSlot): boolean {
-    return bytes.byteLength === slot.bytes && bytes.byteLength <= SDK_LIMITS.assetBytes && hashBytes(bytes) === slot.sha256;
+  private validBytes(bytes: Uint8Array, candidate: AssetCandidate): boolean {
+    return bytes.byteLength === candidate.bytes && bytes.byteLength <= SDK_LIMITS.assetBytes && hashBytes(bytes) === candidate.sha256 && validRenditionHeader(bytes, candidate);
   }
 }
 

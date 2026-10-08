@@ -1,15 +1,39 @@
 {
   "name": "@assetlib/sdk-core",
-  "version": "0.1.0-preview.1",
+  "version": "0.2.0-preview.1",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
-  "bin": { "assetlib-codegen": "./bin/codegen.mjs" },
-  "files": ["dist", "bin", "README.md", "LICENSE"],
-  "scripts": { "build": "tsc -p tsconfig.json", "prepack": "npm run build", "test": "npm run build && node --test test/*.test.mjs" },
-  "dependencies": { "@noble/curves": "2.4.0", "@noble/hashes": "2.4.0", "@scure/base": "2.4.0" },
-  "devDependencies": { "typescript": "5.9.3" },
-  "engines": { "node": ">=22" }
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "assetlib-codegen": "./bin/codegen.mjs"
+  },
+  "files": [
+    "dist",
+    "bin",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepack": "npm run build",
+    "test": "npm run build && node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@noble/curves": "2.4.0",
+    "@noble/hashes": "2.4.0",
+    "@scure/base": "2.4.0"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3"
+  },
+  "engines": {
+    "node": ">=22"
+  }
 }

@@ -3,6 +3,7 @@ import { fetch as expoFetch } from 'expo/fetch';
 import { SDK_LIMITS, type AssetlibConfig, type AssetStorage, type ResolvedAsset } from '@assetlib/sdk-core';
 import { namespace, validateCacheKey, type ImageUri } from './shared';
 
+export const vectorRenderingSupported = false;
 export const platformFetch = expoFetch as unknown as typeof globalThis.fetch;
 const locks = new Map<string, Promise<unknown>>();
 function exclusive<T>(key: string, fn: () => Promise<T>): Promise<T> {
@@ -49,16 +50,21 @@ export function createPlatformStorage(config: AssetlibConfig): AssetStorage {
     }),
     getAsset: async hash => {
       validateCacheKey(hash);
-      const file = new File(directories(config).images, `${hash}.webp`);
-      if (!file.exists || file.size > SDK_LIMITS.assetBytes) return null;
-      return file.bytes();
+      const { images } = directories(config);
+      for (const extension of ['webp', 'png']) {
+        const file = new File(images, `${hash}.${extension}`);
+        if (file.exists && file.size <= SDK_LIMITS.assetBytes) return file.bytes();
+      }
+      return null;
     },
-    putAsset: (hash, bytes) => exclusive(scope, async () => {
+    putAsset: (hash, bytes, mime = 'image/webp') => exclusive(scope, async () => {
+      if (!['image/webp', 'image/png'].includes(mime)) throw new Error('This native adapter supports raster images only.');
+      const extension = mime === 'image/png' ? 'png' : 'webp';
       validateCacheKey(hash);
       if (bytes.length > SDK_LIMITS.assetBytes) throw new Error('Image exceeds the cache entry bound.');
       const { images } = directories(config);
       for (const entry of images.list()) if (entry instanceof File && entry.name.endsWith('.next')) entry.delete();
-      const entries = images.list().filter((entry): entry is File => entry instanceof File && entry.name.endsWith('.webp') && entry.name !== `${hash}.webp`).sort((a, b) => (a.modificationTime ?? 0) - (b.modificationTime ?? 0));
+      const entries = images.list().filter((entry): entry is File => entry instanceof File && /\.(webp|png)$/.test(entry.name) && entry.name !== `${hash}.${extension}`).sort((a, b) => (a.modificationTime ?? 0) - (b.modificationTime ?? 0));
       let total = entries.reduce((sum, file) => sum + file.size, 0);
       while (entries.length >= SDK_LIMITS.cacheEntries || total + bytes.length > SDK_LIMITS.cacheBytes) {
         const oldest = entries.shift();
@@ -68,14 +74,16 @@ export function createPlatformStorage(config: AssetlibConfig): AssetStorage {
       }
       const next = new File(images, `${hash}.next`);
       next.create({ overwrite: true }); next.write(bytes);
-      await next.move(new File(images, `${hash}.webp`), { overwrite: true });
+      await next.move(new File(images, `${hash}.${extension}`), { overwrite: true });
     }),
   };
 }
 export async function imageUri(config: AssetlibConfig, result: ResolvedAsset): Promise<ImageUri> {
   if (!result.sha256) throw new Error('Missing verified image hash.');
   validateCacheKey(result.sha256);
-  const file = new File(directories(config).images, `${result.sha256}.webp`);
+  if (!['image/webp', 'image/png'].includes(result.mime ?? '')) throw new Error('Unsupported native image format.');
+  const extension = result.mime === 'image/png' ? 'png' : 'webp';
+  const file = new File(directories(config).images, `${result.sha256}.${extension}`);
   if (!file.exists) throw new Error('The verified image was evicted from the local cache.');
   return { uri: file.uri, release() {} };
 }

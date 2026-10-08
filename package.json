@@ -1,11 +1,17 @@
 {
   "name": "assetlib-sdk-js",
-  "version": "0.1.0-preview.1",
+  "version": "0.2.0-preview.1",
   "private": true,
   "type": "module",
   "license": "MIT",
-  "workspaces": ["packages/sdk-core", "packages/sdk-expo", "packages/audit"],
-  "engines": { "node": ">=22" },
+  "workspaces": [
+    "packages/sdk-core",
+    "packages/sdk-expo",
+    "packages/audit"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "build": "npm run build --workspace @assetlib/sdk-core",
     "test": "npm test --workspace @assetlib/sdk-core && npm test --workspace @assetlib/audit",

@@ -1,15 +1,34 @@
 {
   "name": "@assetlib/sdk-expo",
-  "version": "0.1.0-preview.1",
+  "version": "0.2.0-preview.1",
   "license": "MIT",
   "type": "module",
   "main": "./src/index.tsx",
   "types": "./src/index.tsx",
   "react-native": "./src/index.tsx",
-  "exports": { ".": "./src/index.tsx" },
-  "files": ["src", "README.md", "LICENSE"],
-  "scripts": { "typecheck": "tsc --noEmit" },
-  "dependencies": { "@assetlib/sdk-core": "0.1.0-preview.1" },
-  "peerDependencies": { "expo": ">=57 <58", "expo-file-system": ">=57 <58", "expo-image": ">=57 <58", "react": ">=19 <20", "react-native": ">=0.86 <0.87" },
-  "devDependencies": { "typescript": "5.9.3", "@types/react": "^19.2.0" }
+  "exports": {
+    ".": "./src/index.tsx"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@assetlib/sdk-core": "0.2.0-preview.1"
+  },
+  "peerDependencies": {
+    "expo": ">=57 <58",
+    "expo-file-system": ">=57 <58",
+    "expo-image": ">=57 <58",
+    "react": ">=19 <20",
+    "react-native": ">=0.86 <0.87"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3",
+    "@types/react": "^19.2.0"
+  }
 }

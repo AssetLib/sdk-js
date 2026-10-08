@@ -12,11 +12,11 @@ Copy the public SDK configuration from the console into a demo’s **Connect** s
 
 | Package | What works in this preview |
 | --- | --- |
-| [`@assetlib/sdk-core`](packages/sdk-core) | Pinned Ed25519 manifest verification, SHA-256 image checks, durable sequence tracking, compatible cached fallback, local catalog code generation |
-| [`@assetlib/sdk-expo`](packages/sdk-expo) | Expo 57 component, native file cache, web IndexedDB cache, `expo-image` rendering |
+| [`@assetlib/sdk-core`](packages/sdk-core) | Pinned Ed25519 manifest verification, SHA-256 image checks, durable sequence tracking, compatible cached fallback, local catalog code generation, signed PNG/WebP size selection |
+| [`@assetlib/sdk-expo`](packages/sdk-expo) | Expo 57 component, native file cache, web IndexedDB cache, `expo-image` rendering, browser-only opt-in SVG |
 | [`@assetlib/audit`](packages/audit) | Read-only PNG/JPEG/WebP inventory, duplicate evidence, dimension candidates, optional literal-reference hints |
 
-There are no Swift or Kotlin SDKs, remote MCP server, published agent marketplace package, or npm registry packages in this release. SDK source and release tarballs are public; the hosted Assetlib console is a separate service.
+Separate [Swift](https://github.com/AssetLib/sdk-swift) and [Kotlin](https://github.com/AssetLib/sdk-android) previews are available. This release does not include a remote MCP server, marketplace package, or npm registry publication. SDK source and release tarballs are public; the hosted Assetlib console is a separate service.
 
 ## Install the preview SDKs
 
@@ -24,8 +24,8 @@ Use both exact tarball URLs from the matching GitHub release. The core package i
 
 ```sh
 npm install \
-  https://github.com/AssetLib/sdk-js/releases/download/v0.1.0-preview.1/assetlib-sdk-core-0.1.0-preview.1.tgz \
-  https://github.com/AssetLib/sdk-js/releases/download/v0.1.0-preview.1/assetlib-sdk-expo-0.1.0-preview.1.tgz
+  https://github.com/AssetLib/sdk-js/releases/download/v0.2.0-preview.1/assetlib-sdk-core-0.2.0-preview.1.tgz \
+  https://github.com/AssetLib/sdk-js/releases/download/v0.2.0-preview.1/assetlib-sdk-expo-0.2.0-preview.1.tgz
 npx expo install expo-file-system expo-image
 ```
 
@@ -46,6 +46,8 @@ await client.refresh();
   client={client}
   asset={AppAssets.Travel.coast}
   fallback={require('./assets/coast.png')}
+  pixelWidth={600}
+  pixelHeight={450}
   contentFit="cover"
   style={{ width: '100%', aspectRatio: 4 / 3 }}
 />
