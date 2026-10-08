@@ -6,6 +6,8 @@ import type { AssetlibConfig, AssetMime, AssetRef, ClientOptions, ClientStatus, 
 export type * from './types.js';
 import { selectAssetCandidates, supportedFormats, targetPixels, validRenditionHeader, validateRenditions, type AssetCandidate } from './renditions.js';
 export { selectAssetCandidates } from './renditions.js';
+import { validateAccessibility } from './accessibility.js';
+export { resolveAccessibilityDescription, validateAccessibility } from './accessibility.js';
 
 export const SDK_LIMITS = Object.freeze({ manifestBytes: 256 * 1024, assetBytes: 8 * 1024 * 1024, slots: 100, retainedReleases: 8, stateBytes: 3 * 1024 * 1024, cacheBytes: 50 * 1024 * 1024, cacheEntries: 100 });
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
@@ -47,6 +49,7 @@ export function verifySignedManifest(input: unknown, config: AssetlibConfig): { 
     const url = new URL(value.url, config.manifestUrl);
     if (url.origin !== new URL(config.manifestUrl).origin || url.username || url.password || url.search || url.hash || url.pathname !== `/api/delivery/${config.orgId}/${config.appId}/assets/${value.assetId}`) return fail('Asset URL is outside the configured app.');
     validateRenditions(payload, value, config);
+    if ('accessibility' in value) validateAccessibility(value.accessibility);
     keys.add(value.key);
   }
   return { envelope: input as SignedManifest, payload: payload as ManifestPayload };
@@ -163,6 +166,7 @@ export class AssetClient {
     return this.serial(async () => {
       await this.load();
       if (!validKey(ref.key) || !integer(ref.width, 1, 8192) || !integer(ref.height, 1, 8192)) throw new Error('Invalid generated asset reference.');
+      if (ref.bundledAccessibility !== undefined) validateAccessibility(ref.bundledAccessibility);
       const target = targetPixels(ref, options);
       let message = this.storageFailure ?? 'No compatible published artwork is available.';
       for (let index = 0; index < this.state.history.length; index++) {
@@ -171,6 +175,7 @@ export class AssetClient {
         if (!slot) continue;
         for (const candidate of selectAssetCandidates(slot, target, this.formats)) {
           const identity = { mime: candidate.mime, sha256: candidate.sha256, assetId: slot.assetId,
+            ...(slot.accessibility ? { accessibility: Object.freeze({ defaultLocale: slot.accessibility.defaultLocale, descriptions: Object.freeze({ ...slot.accessibility.descriptions }) }) } : {}),
             ...(candidate.isRendition ? { pixelWidth: candidate.width, pixelHeight: candidate.height } : {}) };
           try {
             const cached = await this.options.storage.getAsset(candidate.sha256);
@@ -184,7 +189,7 @@ export class AssetClient {
           } catch (error) { message = error instanceof Error ? error.message : 'Artwork could not be loaded.'; }
         }
       }
-      return { source: 'bundle', sequence: null, message: `Using bundled artwork. ${message}` };
+      return { source: 'bundle', sequence: null, message: `Using bundled artwork. ${message}`, ...(ref.bundledAccessibility ? { accessibility: ref.bundledAccessibility } : {}) };
     });
   }
   private validBytes(bytes: Uint8Array, candidate: AssetCandidate): boolean {

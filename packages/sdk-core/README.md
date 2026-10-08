@@ -22,6 +22,22 @@ const asset = await client.resolve(AppAssets.Travel.coast, { pixelWidth: 600, pi
 
 Public config: `{ schemaVersion: 1, orgId, appId, environment: 'production', manifestUrl, pinnedPublicKey, keyId? }`. The PEM Ed25519 public key must come from a trusted provisioning step independent of the delivery response. Public config contains no admin credentials. Importing it from an untrusted source changes the trust anchor; verification cannot establish that the source belongs to your organization.
 
+## Image descriptions
+
+Placement descriptors optionally carry signed `accessibility: { defaultLocale, descriptions }` metadata. `resolve()` returns the metadata for the image it actually selects, including a cached image from an older release. Missing remote metadata never inherits the bundled image's description. Existing descriptors without the field remain valid; no extension version is required.
+
+```ts
+import { resolveAccessibilityDescription } from '@assetlib/sdk-core';
+
+const result = await client.resolve(AppAssets.Travel.coast);
+const description = resolveAccessibilityDescription(result.accessibility, 'en-GB');
+// The app decides whether this usage needs a description or is decorative.
+```
+
+Lookup tries a case-insensitive exact locale, progressively removes subtags, then uses `defaultLocale`. Metadata requires 1–32 case-insensitively unique locale tags, each at most 63 characters and matching `[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*` over the entire string. The default must name an existing locale. Descriptions must contain non-whitespace text and be at most 1,000 UTF-16 code units. A present null or invalid metadata field rejects the manifest. Returned remote metadata is immutable.
+
+App-owned catalog placements may include `bundledAccessibility` with the same shape. Offline code generation validates and preserves it, and resolution returns it only for bundled artwork. Keep it synchronized with the checked-in image. The SDK does not generate labels from filenames or attach accessibility behavior to raw images. Controls should describe their action; decorative versus descriptive artwork is a choice made by each usage.
+
 ## Image formats and sizes
 
 Preview 0.2 accepts the optional signed `renditionSchemaVersion: 1` extension. Existing schema-1 manifests still work; older clients can use the mandatory WebP fallback in new manifests. By default, the client selects PNG or WebP. Ask for physical pixels with both `pixelWidth` and `pixelHeight`; without a target, selection uses the generated placement dimensions. Layout and display density remain the application's responsibility.
