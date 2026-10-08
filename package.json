@@ -1,0 +1,26 @@
+{
+  "name": "assetlib-sdk-js",
+  "version": "0.1.0-preview.1",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "workspaces": ["packages/sdk-core", "packages/sdk-expo", "packages/audit"],
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "build": "npm run build --workspace @assetlib/sdk-core",
+    "test": "npm test --workspace @assetlib/sdk-core && npm test --workspace @assetlib/audit",
+    "typecheck": "npm run build && npm run typecheck --workspace @assetlib/sdk-expo",
+    "verify": "npm test && npm run typecheck",
+    "pack:release": "node scripts/pack.mjs",
+    "audit:assets": "node packages/audit/bin/assetlib-audit.mjs"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.0",
+    "expo": "57.0.27",
+    "expo-file-system": "57.0.7",
+    "expo-image": "57.0.5",
+    "react": "19.2.3",
+    "react-native": "0.86.3",
+    "typescript": "5.9.3"
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "name": "@assetlib/audit",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local, read-only evidence for an app asset migration.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "assetlib-audit": "./bin/assetlib-audit.mjs"
+  },
+  "exports": "./src/audit.mjs",
+  "files": [
+    "bin",
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test",
+    "audit": "node bin/assetlib-audit.mjs"
+  },
+  "dependencies": {
+    "image-size": "2.0.4"
+  },
+  "license": "MIT"
+}
