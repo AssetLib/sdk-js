@@ -28,7 +28,7 @@ export function supportedFormats(formats: readonly AssetMime[] = ['image/webp', 
 
 export function targetPixels(ref: AssetRef, options: ResolveOptions): { width: number; height: number } {
   if (!record(options)) throw new Error('Invalid rendition target.');
-  if (!own(options, 'pixelWidth') && !own(options, 'pixelHeight')) return { width: ref.width, height: ref.height };
+  if (options.pixelWidth === undefined && options.pixelHeight === undefined) return { width: ref.width, height: ref.height };
   if (!integer(options.pixelWidth, 1, 8192) || !integer(options.pixelHeight, 1, 8192)) throw new Error('Supply both target pixel dimensions as integers between 1 and 8192.');
   return { width: options.pixelWidth, height: options.pixelHeight };
 }

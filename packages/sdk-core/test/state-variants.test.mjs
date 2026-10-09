@@ -1,0 +1,41 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { generateKeyPairSync, createHash, sign } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import { AssetClient, createMemoryStorage, hashBytes, parsePublicConfig } from '../dist/index.js';
+
+test('a state without renditions never inherits the default state artwork', async () => {
+  const fixture = name => readFile(new URL(`./fixtures/${name}`, import.meta.url));
+  const original = JSON.parse(await fixture('manifests/valid-renditions-seq4.json'));
+  const payload = JSON.parse(original.payload);
+  const { key: slotKey, screen, width, height, ...empty } = payload.slots[0];
+  const grownBytes = new Uint8Array(await fixture('assets/ridge.webp'));
+  const grownId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  const grown = { assetId: grownId, sha256: hashBytes(grownBytes), mime: 'image/webp', bytes: grownBytes.byteLength, url: `/api/delivery/${payload.orgId}/${payload.appId}/assets/${grownId}` };
+  payload.stateSchemaVersion = 1;
+  payload.slots[0] = { key: slotKey, screen, width, height, ...empty, defaultState: 'empty', states: { empty, grown } };
+  const keys = generateKeyPairSync('ed25519');
+  const publicKey = keys.publicKey.export({ type: 'spki', format: 'pem' }).toString();
+  const keyId = createHash('sha256').update(publicKey).digest('hex').slice(0, 16);
+  const serialized = JSON.stringify(payload);
+  const envelope = { algorithm: 'Ed25519', keyId, publicKey, payload: serialized, signature: sign(null, Buffer.from(serialized), keys.privateKey).toString('base64') };
+  const config = parsePublicConfig({ schemaVersion: 1, orgId: payload.orgId, appId: payload.appId, environment: 'production', manifestUrl: `https://images.example/api/delivery/${payload.orgId}/${payload.appId}/manifest`, pinnedPublicKey: publicKey });
+  const small = empty.renditions.find(item => item.mime === 'image/png' && item.width === 120);
+  const smallBytes = new Uint8Array(await fixture('assets/small.png'));
+  const requests = [];
+  const client = new AssetClient(config, { storage: createMemoryStorage(), fetch: async input => {
+    const url = new URL(input); requests.push(url.pathname);
+    if (url.href === config.manifestUrl) return new Response(JSON.stringify(envelope));
+    if (url.pathname === small.url) return new Response(smallBytes);
+    if (url.pathname === grown.url) return new Response(grownBytes);
+    return new Response('unexpected asset', { status: 404 });
+  } });
+  assert.equal((await client.refresh()).error, undefined);
+  const result = await client.resolveStateSet({ key: slotKey, width, height, states: ['empty', 'grown'] }, { pixelWidth: 120, pixelHeight: 90 });
+  assert.equal(result.source, 'remote');
+  assert.equal(result.states.empty.sha256, small.sha256);
+  assert.equal(result.states.grown.sha256, grown.sha256);
+  assert.equal(result.states.grown.mime, 'image/webp');
+  assert.deepEqual(result.states.grown.bytes, grownBytes);
+  assert.ok(requests.includes(grown.url));
+});

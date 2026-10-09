@@ -1,7 +1,7 @@
 import { Directory, File, Paths } from 'expo-file-system';
 import { fetch as expoFetch } from 'expo/fetch';
 import { SDK_LIMITS, type AssetlibConfig, type AssetStorage, type ResolvedAsset } from '@assetlib/sdk-core';
-import { namespace, validateCacheKey, type ImageUri } from './shared';
+import { namespace, rasterDataUri, validateCacheKey, type ImageUri } from './shared';
 
 export const vectorRenderingSupported = false;
 export const platformFetch = expoFetch as unknown as typeof globalThis.fetch;
@@ -82,6 +82,7 @@ export async function imageUri(config: AssetlibConfig, result: ResolvedAsset): P
   if (!result.sha256) throw new Error('Missing verified image hash.');
   validateCacheKey(result.sha256);
   if (!['image/webp', 'image/png'].includes(result.mime ?? '')) throw new Error('Unsupported native image format.');
+  if (result.cachePolicy === 'memory' || result.cachePolicy === 'none') return rasterDataUri(result);
   const extension = result.mime === 'image/png' ? 'png' : 'webp';
   const file = new File(directories(config).images, `${result.sha256}.${extension}`);
   if (!file.exists) throw new Error('The verified image was evicted from the local cache.');

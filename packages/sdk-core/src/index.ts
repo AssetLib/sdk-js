@@ -2,10 +2,17 @@ import { ed25519 } from '@noble/curves/ed25519.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 import { base64 } from '@scure/base';
-import type { AssetlibConfig, AssetMime, AssetRef, ClientOptions, ClientStatus, ManifestPayload, RefreshResult, ResolvedAsset, ResolveOptions, SignedManifest } from './types.js';
+import type { AssetlibConfig, AssetMime, AssetRef, AssetPage, AssetPageOptions, AssetPagePayload, CachePolicy, StorageMime, CatalogAsset, DynamicAssetRef, StateSetRef, ResolvedStateSet, ManifestSlot, ClientOptions, ClientStatus, ManifestPayload, RefreshResult, ResolvedAsset, ResolvedAnimation, ResolveOptions, SignedManifest } from './types.js';
 export type * from './types.js';
 import { selectAssetCandidates, supportedFormats, targetPixels, validRenditionHeader, validateRenditions, type AssetCandidate } from './renditions.js';
 export { selectAssetCandidates } from './renditions.js';
+import { validateAnimationExtension, verifiedAnimationData } from './animations.js';
+export { validateLottie, validateLottieMetadata, LOTTIE_LIMITS } from './lottie.js';
+export type { LottieMetadata, ValidatedLottie } from './lottie.js';
+export { selectCatalogReferences } from './catalog.js';
+import { assetIdPattern, catalogForSequence, validateAssetPage, validateDeliveryExtensions, validStateRef } from './delivery.js';
+import { validateAccessibility } from './accessibility.js';
+export { resolveAccessibilityDescription, validateAccessibility } from './accessibility.js';
 
 export const SDK_LIMITS = Object.freeze({ manifestBytes: 256 * 1024, assetBytes: 8 * 1024 * 1024, slots: 100, retainedReleases: 8, stateBytes: 3 * 1024 * 1024, cacheBytes: 50 * 1024 * 1024, cacheEntries: 100 });
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
@@ -25,39 +32,61 @@ function publicKeyBytes(pem: string): Uint8Array {
 }
 
 export function parsePublicConfig(input: unknown, options: { allowInsecureLoopback?: boolean } = {}): AssetlibConfig {
-  if (!record(input) || input.schemaVersion !== 1 || input.environment !== 'production' || typeof input.orgId !== 'string' || !uuid.test(input.orgId) || typeof input.appId !== 'string' || !uuid.test(input.appId) || typeof input.manifestUrl !== 'string' || typeof input.pinnedPublicKey !== 'string' || input.pinnedPublicKey.length > 256) return fail('Invalid Assetlib public configuration.');
+  if (!record(input) || input.schemaVersion !== 1 || (input.environment !== 'staging' && input.environment !== 'production') || typeof input.orgId !== 'string' || !uuid.test(input.orgId) || typeof input.appId !== 'string' || !uuid.test(input.appId) || typeof input.manifestUrl !== 'string' || typeof input.pinnedPublicKey !== 'string' || input.pinnedPublicKey.length > 256) return fail('Invalid Assetlib public configuration.');
   const url = new URL(input.manifestUrl);
   const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
   if (url.protocol !== 'https:' && !(options.allowInsecureLoopback === true && loopback && url.protocol === 'http:')) return fail('Assetlib requires HTTPS; only explicitly enabled loopback development may use HTTP.');
-  if (url.username || url.password || url.search || url.hash || url.pathname !== `/api/delivery/${input.orgId}/${input.appId}/manifest`) return fail('Manifest URL does not match this app.');
+  const deliveryPath = `/api/delivery/${input.orgId}/${input.appId}`;
+  const environmentPath = `${deliveryPath}/environments/${input.environment}/manifest`;
+  const legacyProductionPath = input.environment === 'production' && url.pathname === `${deliveryPath}/manifest`;
+  if (url.username || url.password || url.search || url.hash || (url.pathname !== environmentPath && !legacyProductionPath)) return fail('Manifest URL does not match this app.');
   publicKeyBytes(input.pinnedPublicKey);
   const keyId = hashBytes(utf8ToBytes(input.pinnedPublicKey)).slice(0, 16);
   if (input.keyId !== undefined && input.keyId !== keyId) return fail('Signing key ID does not match the pinned key.');
-  return { schemaVersion: 1, orgId: input.orgId, appId: input.appId, environment: 'production', manifestUrl: url.href, pinnedPublicKey: input.pinnedPublicKey, keyId };
+  return { schemaVersion: 1, orgId: input.orgId, appId: input.appId, environment: input.environment, manifestUrl: url.href, pinnedPublicKey: input.pinnedPublicKey, keyId };
+}
+
+function verifyEnvelope(input: unknown, config: AssetlibConfig): { envelope: SignedManifest; payload: unknown } {
+  if (!record(input) || input.algorithm !== 'Ed25519' || input.publicKey !== config.pinnedPublicKey || input.keyId !== hashBytes(utf8ToBytes(config.pinnedPublicKey)).slice(0, 16) || typeof input.payload !== 'string' || utf8ToBytes(input.payload).length > SDK_LIMITS.manifestBytes || typeof input.signature !== 'string' || !/^[A-Za-z0-9+/]{86}==$/.test(input.signature)) return fail('Invalid signed manifest envelope.');
+  if (!ed25519.verify(base64.decode(input.signature), utf8ToBytes(input.payload), publicKeyBytes(config.pinnedPublicKey), { zip215: false })) return fail('Manifest signature verification failed.');
+  return { envelope: input as SignedManifest, payload: JSON.parse(input.payload) };
+}
+
+export function verifySignedAssetPage(input: unknown, config: AssetlibConfig): { envelope: SignedManifest; payload: AssetPagePayload } {
+  const { envelope, payload } = verifyEnvelope(input, config);
+  return { envelope, payload: validateAssetPage(payload, config) };
 }
 
 export function verifySignedManifest(input: unknown, config: AssetlibConfig): { envelope: SignedManifest; payload: ManifestPayload } {
-  if (!record(input) || input.algorithm !== 'Ed25519' || input.publicKey !== config.pinnedPublicKey || input.keyId !== hashBytes(utf8ToBytes(config.pinnedPublicKey)).slice(0, 16) || typeof input.payload !== 'string' || utf8ToBytes(input.payload).length > SDK_LIMITS.manifestBytes || typeof input.signature !== 'string' || !/^[A-Za-z0-9+/]{86}==$/.test(input.signature)) return fail('Invalid signed manifest envelope.');
-  if (!ed25519.verify(base64.decode(input.signature), utf8ToBytes(input.payload), publicKeyBytes(config.pinnedPublicKey), { zip215: false })) return fail('Manifest signature verification failed.');
-  const payload: unknown = JSON.parse(input.payload);
-  if (!record(payload) || payload.schemaVersion !== 1 || payload.orgId !== config.orgId || payload.appId !== config.appId || payload.environment !== config.environment || !integer(payload.sequence, 1, 2_147_483_647) || typeof payload.createdAt !== 'string' || !Number.isFinite(Date.parse(payload.createdAt)) || !Array.isArray(payload.slots) || payload.slots.length < 1 || payload.slots.length > SDK_LIMITS.slots) return fail('Unsupported or cross-app manifest payload.');
+  const { envelope, payload } = verifyEnvelope(input, config);
+  if (!record(payload) || payload.schemaVersion !== 1 || payload.orgId !== config.orgId || payload.appId !== config.appId || payload.environment !== config.environment || !integer(payload.sequence, 1, 2_147_483_647) || typeof payload.createdAt !== 'string' || !Number.isFinite(Date.parse(payload.createdAt)) || !Array.isArray(payload.slots) || payload.slots.length > SDK_LIMITS.slots) return fail('Unsupported or cross-app manifest payload.');
   const keys = new Set<string>();
   for (const value of payload.slots) {
     if (!record(value) || !validKey(value.key) || keys.has(value.key) || typeof value.screen !== 'string' || value.screen.length > 120 || !integer(value.width, 1, 8192) || !integer(value.height, 1, 8192) || typeof value.assetId !== 'string' || !uuid.test(value.assetId) || typeof value.sha256 !== 'string' || !hashPattern.test(value.sha256) || value.mime !== 'image/webp' || !integer(value.bytes, 1, SDK_LIMITS.assetBytes) || typeof value.url !== 'string') return fail('Invalid or unsupported placement in manifest.');
     const url = new URL(value.url, config.manifestUrl);
     if (url.origin !== new URL(config.manifestUrl).origin || url.username || url.password || url.search || url.hash || url.pathname !== `/api/delivery/${config.orgId}/${config.appId}/assets/${value.assetId}`) return fail('Asset URL is outside the configured app.');
     validateRenditions(payload, value, config);
+    validateAnimationExtension(payload, value, config);
+    if ('accessibility' in value) validateAccessibility(value.accessibility);
     keys.add(value.key);
   }
-  return { envelope: input as SignedManifest, payload: payload as ManifestPayload };
+  validateDeliveryExtensions(payload, config);
+  if (!payload.slots.length && !(record(payload.catalog) && Number(payload.catalog.count) > 0)) return fail('A release must contain placements or catalog images.');
+  return { envelope, payload: payload as ManifestPayload };
 }
 
-async function fetchBounded(fetcher: typeof fetch, url: string, maxBytes: number, timeoutMs: number, accept = 'image/webp'): Promise<Uint8Array> {
+const throwIfAborted = (signal?: AbortSignal): void => { if (signal?.aborted) throw new Error('Assetlib request cancelled.'); };
+const cachePolicy = (policy: unknown): CachePolicy => { if (policy !== 'disk' && policy !== 'memory' && policy !== 'none') throw new Error('Unknown image cache policy.'); return policy; };
+
+async function fetchBounded(fetcher: typeof fetch, url: string, maxBytes: number, timeoutMs: number, accept = 'image/webp', signal?: AbortSignal, noStore = false): Promise<Uint8Array> {
+  throwIfAborted(signal);
   const controller = new AbortController();
   let timeout: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<never>((_, reject) => { timeout = setTimeout(() => { controller.abort(); reject(new Error('Assetlib request timed out.')); }, timeoutMs); });
+  let abort: (() => void) | undefined;
+  const cancelled = new Promise<never>((_, reject) => { abort = () => { controller.abort(); reject(new Error('Assetlib request cancelled.')); }; signal?.addEventListener('abort', abort, { once: true }); });
   const request = async () => {
-    const response = await fetcher(url, { method: 'GET', credentials: 'omit', redirect: 'error', signal: controller.signal, headers: { Accept: url.endsWith('/manifest') ? 'application/json' : accept } });
+    const response = await fetcher(url, { method: 'GET', credentials: 'omit', redirect: 'error', ...(noStore ? { cache: 'no-store' as const } : {}), signal: controller.signal, headers: { Accept: url.endsWith('/manifest') ? 'application/json' : accept } });
     if (!response.ok || response.redirected) throw new Error(`Assetlib delivery returned ${response.status}.`);
     const declared = response.headers.get('content-length');
     if (declared && (!/^\d+$/.test(declared) || Number(declared) > maxBytes)) throw new Error('Response exceeds the SDK byte limit.');
@@ -80,8 +109,8 @@ async function fetchBounded(fetcher: typeof fetch, url: string, maxBytes: number
     for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
     return bytes;
   };
-  try { return await Promise.race([request(), deadline]); }
-  finally { if (timeout) clearTimeout(timeout); controller.abort(); }
+  try { return await Promise.race([request(), deadline, cancelled]); }
+  finally { if (timeout) clearTimeout(timeout); if (abort) signal?.removeEventListener('abort', abort); controller.abort(); }
 }
 
 type State = { version: 1; highestSequence: number; history: SignedManifest[] };
@@ -96,9 +125,18 @@ export class AssetClient {
   private timeoutMs: number;
   private fetcher: typeof fetch;
   private formats: readonly AssetMime[];
+  private policy: CachePolicy;
+  private memory = new Map<string, Uint8Array>();
+  private handles = new WeakMap<DynamicAssetRef, { descriptor: CatalogAsset; sequence: number }>();
+  private activeTransfers = 0;
+  private transferQueue: (() => void)[] = [];
+  private concurrency: number;
   constructor(config: AssetlibConfig, private options: ClientOptions) {
     this.config = parsePublicConfig(config, options);
     this.formats = supportedFormats(options.formats);
+    this.policy = cachePolicy(options.cachePolicy ?? 'disk');
+    this.concurrency = options.maxConcurrentDownloads ?? 4;
+    if (!integer(this.concurrency, 1, 8)) fail('maxConcurrentDownloads must be between 1 and 8.');
     this.timeoutMs = options.timeoutMs ?? 8000;
     if (!integer(this.timeoutMs, 20, 30000)) fail('timeoutMs must be between 20 and 30000.');
     this.fetcher = options.fetch ?? globalThis.fetch;
@@ -159,33 +197,171 @@ export class AssetClient {
       }
     });
   }
-  resolve(ref: AssetRef, options: ResolveOptions = {}): Promise<ResolvedAsset> {
-    return this.serial(async () => {
-      await this.load();
-      if (!validKey(ref.key) || !integer(ref.width, 1, 8192) || !integer(ref.height, 1, 8192)) throw new Error('Invalid generated asset reference.');
-      const target = targetPixels(ref, options);
-      let message = this.storageFailure ?? 'No compatible published artwork is available.';
-      for (let index = 0; index < this.state.history.length; index++) {
-        const { payload } = verifySignedManifest(this.state.history[index], this.config);
-        const slot = payload.slots.find(item => item.key === ref.key && item.width === ref.width && item.height === ref.height);
-        if (!slot) continue;
-        for (const candidate of selectAssetCandidates(slot, target, this.formats)) {
-          const identity = { mime: candidate.mime, sha256: candidate.sha256, assetId: slot.assetId,
-            ...(candidate.isRendition ? { pixelWidth: candidate.width, pixelHeight: candidate.height } : {}) };
-          try {
-            const cached = await this.options.storage.getAsset(candidate.sha256);
-            if (cached && this.validBytes(cached, candidate)) return { source: 'cache', sequence: payload.sequence, message: index ? `Using verified artwork from release ${payload.sequence}. ${message}` : 'Verified artwork loaded from the local cache.', bytes: cached, ...identity };
-            // Historical releases never trigger downloads, even if a preferred size is missing.
-            if (index !== 0) continue;
-            const bytes = await fetchBounded(this.fetcher, new URL(candidate.url, this.config.manifestUrl).href, candidate.bytes, this.timeoutMs, candidate.mime);
-            if (!this.validBytes(bytes, candidate)) throw new Error('Asset bytes do not match the signed manifest.');
-            await this.options.storage.putAsset(candidate.sha256, bytes, candidate.mime);
-            return { source: 'remote', sequence: payload.sequence, message: 'Downloaded artwork; signature and file hash verified.', bytes, ...identity };
-          } catch (error) { message = error instanceof Error ? error.message : 'Artwork could not be loaded.'; }
-        }
-      }
-      return { source: 'bundle', sequence: null, message: `Using bundled artwork. ${message}` };
+  /** Only metadata transitions use the serial queue. Image transfers are bounded and concurrent. */
+  private snapshot(): Promise<{ payload: ManifestPayload }[]> {
+    return this.serial(async () => { await this.load(); return this.state.history.map(entry => ({ payload: verifySignedManifest(entry, this.config).payload })); });
+  }
+  private withTransfer<T>(work: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+    throwIfAborted(signal);
+    return new Promise<T>((resolve, reject) => {
+      const cancel = () => { this.transferQueue = this.transferQueue.filter(item => item !== start); reject(new Error('Assetlib request cancelled.')); };
+      const start = () => {
+        signal?.removeEventListener('abort', cancel);
+        if (signal?.aborted) { reject(new Error('Assetlib request cancelled.')); return; }
+        this.activeTransfers++;
+        Promise.resolve().then(work).then(resolve, reject).finally(() => {
+          this.activeTransfers--;
+          while (this.activeTransfers < this.concurrency && this.transferQueue.length) this.transferQueue.shift()!();
+        });
+      };
+      if (this.activeTransfers < this.concurrency) start();
+      else { this.transferQueue.push(start); signal?.addEventListener('abort', cancel, { once: true }); }
     });
+  }
+  private async cached(hash: string, policy: CachePolicy): Promise<Uint8Array | null> {
+    if (policy === 'none') return null;
+    if (policy === 'disk') return this.options.storage.getAsset(hash);
+    const value = this.memory.get(hash);
+    if (!value) return null;
+    this.memory.delete(hash); this.memory.set(hash, value);
+    return value.slice();
+  }
+  private async retain(hash: string, bytes: Uint8Array, mime: StorageMime, policy: CachePolicy): Promise<void> {
+    if (policy === 'none') return;
+    if (policy === 'disk') { await this.options.storage.putAsset(hash, bytes, mime); return; }
+    this.memory.delete(hash); this.memory.set(hash, bytes.slice());
+    while (this.memory.size > SDK_LIMITS.cacheEntries || [...this.memory.values()].reduce((sum, value) => sum + value.byteLength, 0) > SDK_LIMITS.cacheBytes) this.memory.delete(this.memory.keys().next().value!);
+  }
+  clearMemoryCache(): void { this.memory.clear(); }
+  private async resolveDescriptor(slot: ManifestSlot, sequence: number, download: boolean, options: ResolveOptions): Promise<ResolvedAsset> {
+    const policy = cachePolicy(options.cachePolicy ?? this.policy);
+    const target = targetPixels(slot, options);
+    let message = 'No compatible image bytes are available.';
+    for (const candidate of selectAssetCandidates(slot, target, this.formats)) {
+      throwIfAborted(options.signal);
+      const identity = { mime: candidate.mime, sha256: candidate.sha256, assetId: slot.assetId, cachePolicy: policy,
+        ...(slot.accessibility ? { accessibility: Object.freeze({ defaultLocale: slot.accessibility.defaultLocale, descriptions: Object.freeze({ ...slot.accessibility.descriptions }) }) } : {}),
+        ...(candidate.isRendition ? { pixelWidth: candidate.width, pixelHeight: candidate.height } : {}) };
+      try {
+        const cached = await this.cached(candidate.sha256, policy);
+        throwIfAborted(options.signal);
+        if (cached && this.validBytes(cached, candidate)) return { source: 'cache', sequence, message: 'Verified artwork loaded from cache.', bytes: cached, ...identity };
+        if (!download) continue;
+        const bytes = await this.withTransfer(() => fetchBounded(this.fetcher, new URL(candidate.url, this.config.manifestUrl).href, candidate.bytes, this.timeoutMs, candidate.mime, options.signal, policy !== 'disk'), options.signal);
+        throwIfAborted(options.signal);
+        if (!this.validBytes(bytes, candidate)) throw new Error('Asset bytes do not match the signed descriptor.');
+        await this.retain(candidate.sha256, bytes, candidate.mime, policy);
+        throwIfAborted(options.signal);
+        return { source: 'remote', sequence, message: 'Downloaded and verified artwork.', bytes, ...identity };
+      } catch (error) { throwIfAborted(options.signal); message = error instanceof Error ? error.message : 'Artwork could not be loaded.'; }
+    }
+    return { source: 'bundle', sequence: null, cachePolicy: policy, message };
+  }
+  async resolve(ref: AssetRef, options: ResolveOptions = {}): Promise<ResolvedAsset> {
+    if (!validKey(ref.key) || !integer(ref.width, 1, 8192) || !integer(ref.height, 1, 8192)) throw new Error('Invalid generated asset reference.');
+    if (ref.bundledAccessibility !== undefined) validateAccessibility(ref.bundledAccessibility);
+    targetPixels(ref, options); cachePolicy(options.cachePolicy ?? this.policy); throwIfAborted(options.signal);
+    const history = await this.snapshot();
+    let message = this.storageFailure ?? 'No compatible published artwork is available.';
+    for (const [index, { payload }] of history.entries()) {
+      const slot = payload.slots.find(item => item.key === ref.key && item.width === ref.width && item.height === ref.height);
+      if (!slot) continue;
+      const result = await this.resolveDescriptor(slot, payload.sequence, index === 0, options);
+      if (result.source !== 'bundle') return index ? { ...result, message: `Using verified artwork from release ${payload.sequence}. ${message}` } : result;
+      message = result.message;
+    }
+    throwIfAborted(options.signal);
+    return { source: 'bundle', sequence: null, message: `Using bundled artwork. ${message}`, ...(ref.bundledAccessibility ? { accessibility: ref.bundledAccessibility } : {}) };
+  }
+  async resolveStateSet(ref: StateSetRef, options: ResolveOptions = {}): Promise<ResolvedStateSet> {
+    if (!validKey(ref.key) || !integer(ref.width, 1, 8192) || !integer(ref.height, 1, 8192) || !validStateRef(ref.states)) throw new Error('Invalid state set reference.');
+    targetPixels(ref, options); cachePolicy(options.cachePolicy ?? this.policy); throwIfAborted(options.signal);
+    const history = await this.snapshot();
+    for (const [index, { payload }] of history.entries()) {
+      const slot = payload.slots.find(item => item.key === ref.key && item.width === ref.width && item.height === ref.height);
+      if (!slot?.states || Object.keys(slot.states).length !== ref.states.length || ref.states.some(name => !Object.hasOwn(slot.states!, name))) continue;
+      const entries = await Promise.all(ref.states.map(async name => {
+        // Optional metadata and renditions belong to this state, never to the default image.
+        const result = await this.resolveDescriptor({ key: slot.key, screen: slot.screen, width: slot.width, height: slot.height, ...slot.states![name] }, payload.sequence, index === 0, options);
+        return [name, result] as const;
+      }));
+      throwIfAborted(options.signal);
+      if (entries.some(([, value]) => value.source === 'bundle') || entries.reduce((sum, [, value]) => sum + (value.bytes?.byteLength ?? 0), 0) > SDK_LIMITS.cacheBytes) continue;
+      return { source: entries.some(([, value]) => value.source === 'remote') ? 'remote' : 'cache', sequence: payload.sequence,
+        message: 'Complete state set pinned to one release.', states: Object.freeze(Object.fromEntries(entries)) };
+    }
+    throwIfAborted(options.signal);
+    return { source: 'bundle', sequence: null, message: 'Using the complete bundled state set.', states: Object.freeze({}) };
+  }
+  async loadAssetPage(options: AssetPageOptions = {}): Promise<AssetPage> {
+    const limit = options.limit ?? 20;
+    if (!integer(limit, 1, 50) || (options.cursor !== undefined && !assetIdPattern.test(options.cursor)) || (options.sequence !== undefined && !integer(options.sequence, 1, 2_147_483_647))) throw new Error('Invalid asset page request.');
+    throwIfAborted(options.signal);
+    const history = await this.snapshot();
+    if (this.storageFailure) throw new Error(this.storageFailure);
+    const manifest = catalogForSequence(history, options.sequence);
+    if (options.sequence !== undefined && !manifest) throw new Error('This catalog release is no longer retained. Restart pagination.');
+    if (!manifest?.catalog || !manifest.catalog.count) return { items: [], nextCursor: null, sequence: manifest?.sequence ?? 0 };
+    const url = new URL(manifest.catalog.url, this.config.manifestUrl);
+    url.searchParams.set('limit', String(limit));
+    if (options.cursor) url.searchParams.set('cursor', options.cursor);
+    const bytes = await this.withTransfer(() => fetchBounded(this.fetcher, url.href, SDK_LIMITS.manifestBytes, this.timeoutMs, 'application/json', options.signal, true), options.signal);
+    throwIfAborted(options.signal);
+    const { payload } = verifySignedAssetPage(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)), this.config);
+    if (payload.sequence !== manifest.sequence || payload.cursor !== (options.cursor ?? null) || payload.assets.length > limit || payload.assets.length > manifest.catalog.count || (options.cursor && payload.assets.some(asset => asset.assetId <= options.cursor!))) throw new Error('Asset page does not match the requested release or cursor.');
+    const items = payload.assets.map(descriptor => {
+      const ref: DynamicAssetRef = Object.freeze({ kind: 'dynamic', assetId: descriptor.assetId, width: descriptor.width, height: descriptor.height, sequence: payload.sequence, ...(descriptor.name !== undefined ? { name: descriptor.name } : {}) });
+      this.handles.set(ref, { descriptor, sequence: payload.sequence });
+      return ref;
+    });
+    return { items: Object.freeze(items), nextCursor: payload.nextCursor, sequence: payload.sequence };
+  }
+  async resolveAsset(ref: DynamicAssetRef, options: ResolveOptions = {}): Promise<ResolvedAsset> {
+    const entry = this.handles.get(ref);
+    if (!entry) throw new Error("Use an image reference returned by this client's verified catalog.");
+    // Immutable, verified page handles pin their content revision for the feed's lifetime.
+    return this.resolveDescriptor({ ...entry.descriptor, key: entry.descriptor.assetId, screen: '' }, entry.sequence, true, options);
+  }
+  /** Explicit opt-in. Image resolution never downloads an animation. */
+  async resolveAnimation(ref: AssetRef, options: ResolveOptions = {}): Promise<ResolvedAnimation> {
+      const history = await this.snapshot();
+      const policy = cachePolicy(options.cachePolicy ?? this.policy);
+      throwIfAborted(options.signal);
+      if (!validKey(ref.key) || !integer(ref.width, 1, 8192) || !integer(ref.height, 1, 8192)) throw new Error('Invalid generated asset reference.');
+      let message = this.storageFailure ?? 'No compatible published animation is available.';
+      for (let index = 0; index < history.length; index++) {
+        const { payload } = history[index];
+        const slot = payload.slots.find(item => item.key === ref.key && item.width === ref.width && item.height === ref.height);
+        const animation = slot?.animation;
+        // Removing animation is intentional publication state, not a failed download.
+        if (index === 0 && !animation) return { source: 'poster', sequence: null, message: 'The current release has no compatible animation. Use the still poster.' };
+        if (!slot || !animation) continue;
+        const parse = (bytes: Uint8Array) => {
+          if (bytes.byteLength !== animation.bytes || hashBytes(bytes) !== animation.sha256) throw new Error('Animation bytes do not match the signed manifest.');
+          return verifiedAnimationData(bytes, animation);
+        };
+        const result = (source: 'cache' | 'remote', bytes: Uint8Array, parsed: ReturnType<typeof parse>): ResolvedAnimation => ({
+          source, sequence: payload.sequence, message: index ? `Using verified animation from release ${payload.sequence}. ${message}` : source === 'cache' ? 'Verified animation loaded from the local cache.' : 'Downloaded animation; signature, hash and vector profile verified.',
+          sha256: animation.sha256, assetId: slot.assetId, mime: 'application/json', bytes, ...parsed,
+        });
+        try {
+          const cached = await this.cached(animation.sha256, policy);
+          throwIfAborted(options.signal);
+          if (cached) {
+            try { return result('cache', cached, parse(cached)); }
+            catch (error) { message = error instanceof Error ? error.message : 'Cached animation is invalid.'; }
+          }
+          // Older releases may be used only when already cached and reverified.
+          if (index !== 0) continue;
+          const bytes = await this.withTransfer(() => fetchBounded(this.fetcher, new URL(animation.url, this.config.manifestUrl).href, animation.bytes, this.timeoutMs, animation.mime, options.signal, policy !== 'disk'), options.signal);
+          throwIfAborted(options.signal);
+          const parsed = parse(bytes);
+          await this.retain(animation.sha256, bytes, animation.mime, policy);
+          throwIfAborted(options.signal);
+          return result('remote', bytes, parsed);
+        } catch (error) { throwIfAborted(options.signal); message = error instanceof Error ? error.message : 'Animation could not be loaded.'; }
+      }
+      return { source: 'poster', sequence: null, message: `Use the still poster. ${message}` };
   }
   private validBytes(bytes: Uint8Array, candidate: AssetCandidate): boolean {
     return bytes.byteLength === candidate.bytes && bytes.byteLength <= SDK_LIMITS.assetBytes && hashBytes(bytes) === candidate.sha256 && validRenditionHeader(bytes, candidate);

@@ -1,0 +1,20 @@
+{
+  "name": "@assetlib/cli",
+  "version": "0.1.0",
+  "description": "Register checked-in Assetlib catalogs and bounded code references from application builds.",
+  "license": "MIT",
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "bin": { "assetlib": "bin/assetlib.mjs" },
+  "files": ["bin", "src", "README.md", "LICENSE"],
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "verify": "node --check bin/assetlib.mjs && node bin/assetlib.mjs --help"
+  },
+  "publishConfig": { "access": "public", "provenance": false },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AssetLib/sdk-js.git",
+    "directory": "packages/cli"
+  }
+}

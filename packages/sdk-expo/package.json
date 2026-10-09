@@ -1,6 +1,6 @@
 {
   "name": "@assetlib/sdk-expo",
-  "version": "0.2.0-preview.1",
+  "version": "0.3.0-preview.1",
   "license": "MIT",
   "type": "module",
   "main": "./src/index.tsx",
@@ -15,10 +15,11 @@
     "LICENSE"
   ],
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --test test/*.test.mjs"
   },
   "dependencies": {
-    "@assetlib/sdk-core": "0.2.0-preview.1"
+    "@assetlib/sdk-core": "0.3.0-preview.1"
   },
   "peerDependencies": {
     "expo": ">=57 <58",
@@ -28,7 +29,9 @@
     "react-native": ">=0.86 <0.87"
   },
   "devDependencies": {
-    "typescript": "5.9.3",
-    "@types/react": "^19.2.0"
+    "@types/react": "^19.2.0",
+    "react": "19.2.3",
+    "react-test-renderer": "19.2.3",
+    "typescript": "5.9.3"
   }
 }

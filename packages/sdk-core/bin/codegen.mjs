@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { readFile } from 'node:fs/promises';
+import { validateAccessibility } from '../dist/accessibility.js';
 
 try {
   if (process.argv.includes('--help')) {
@@ -15,6 +16,15 @@ try {
     for (const placement of catalog.placements) {
       if (typeof placement.key !== 'string' || !/^[a-zA-Z][a-zA-Z0-9_.-]{0,119}$/.test(placement.key) || keys.has(placement.key) || ![placement.width, placement.height].every(value => Number.isSafeInteger(value) && value > 0 && value <= 8192) || !Array.isArray(placement.symbol) || placement.symbol.length < 1 || placement.symbol.length > 5 || placement.symbol.some(value => typeof value !== 'string' || !/^[A-Za-z_$][\w$]{0,63}$/.test(value) || ['__proto__', 'constructor', 'prototype'].includes(value))) throw new Error('Invalid or duplicate catalog placement.');
       keys.add(placement.key);
+      if (placement.states !== undefined && (!Array.isArray(placement.states) || placement.states.length < 2 || placement.states.length > 16 || new Set(placement.states).size !== placement.states.length || placement.states.some(value => typeof value !== 'string' || !/^[a-z][a-z0-9_-]{0,39}$/.test(value) || ['constructor', 'prototype', '__proto__'].includes(value)))) throw new Error('State sets require 2–16 unique named states.');
+      if ('bundledAccessibility' in placement) validateAccessibility(placement.bundledAccessibility);
+      if ('bundledStateAccessibility' in placement) {
+        if (!placement.states || !placement.bundledStateAccessibility || typeof placement.bundledStateAccessibility !== 'object' || Array.isArray(placement.bundledStateAccessibility)) throw new Error('Bundled state descriptions require a state set.');
+        for (const [state, metadata] of Object.entries(placement.bundledStateAccessibility)) {
+          if (!placement.states.includes(state)) throw new Error('Bundled description has an unknown state.');
+          validateAccessibility(metadata);
+        }
+      }
       let node = tree;
       for (const name of placement.symbol.slice(0, -1)) {
         if (node[name]?.key) throw new Error('Catalog symbols overlap.');
@@ -22,7 +32,7 @@ try {
       }
       const leaf = placement.symbol.at(-1);
       if (Object.hasOwn(node, leaf)) throw new Error('Catalog symbols overlap.');
-      node[leaf] = { key: placement.key, width: placement.width, height: placement.height };
+      node[leaf] = { key: placement.key, width: placement.width, height: placement.height, ...(placement.states ? { states: placement.states } : {}), ...(placement.bundledAccessibility ? { bundledAccessibility: placement.bundledAccessibility } : {}), ...(placement.bundledStateAccessibility ? { bundledStateAccessibility: placement.bundledStateAccessibility } : {}) };
     }
     console.log('// Generated from the checked-in Assetlib catalog. Regenerate instead of editing.\n// No network dependency during compilation.\nexport const AppAssets = ' + JSON.stringify(tree, null, 2) + ' as const;\n');
   }

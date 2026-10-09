@@ -132,3 +132,69 @@ test('offline codegen emits nested typed references and rejects symbol collision
   await writeFile(catalog, JSON.stringify({ schemaVersion: 1, placements: [{ ...ref, symbol: ['Travel'] }, { ...ref, key: 'travel.ridge', symbol: ['Travel', 'ridge'] }] }));
   assert.equal(run().status, 1);
 });
+
+test('a generic fixed-contract renderer adopts an unseen backend key and later artwork revisions without a checked-in key registry', async () => {
+  const service = delivery(), storage = createMemoryStorage();
+  const client = new AssetClient(config, { storage, fetch: service.fetch });
+  const renderContract = Object.freeze({ width: 800, height: 500 });
+  // Only the render contract is app-owned; the artwork key arrives as backend data.
+  const backendAssignment = JSON.parse('{"artworkKey":"cards.platinum"}');
+  const runtimeRef = Object.freeze({ key: backendAssignment.artworkKey, ...renderContract });
+  const slot = (key, id, bytes) => ({ key, ...renderContract, screen: 'Wallet', assetId: id,
+    sha256: hashBytes(bytes), url: `/api/delivery/${orgId}/${appId}/assets/${id}`, mime: 'image/webp', bytes: bytes.length });
+  const classic = slot('cards.classic', assetId, bytes1);
+  service.state.release = envelope(1, bytes1, { slots: [classic] });
+  await client.refresh(); service.state.requests = [];
+  assert.equal((await client.resolve(runtimeRef)).source, 'bundle');
+  assert.equal(service.state.requests.length, 0, 'an unpublished assignment never becomes a URL');
+
+  const newArtworkId = '44444444-4444-4444-8444-444444444444';
+  const platinum = slot(backendAssignment.artworkKey, newArtworkId, bytes1);
+  service.state.release = envelope(2, bytes1, { slots: [classic, platinum] });
+  await client.refresh(); service.state.requests = [];
+  const first = await client.resolve(runtimeRef);
+  assert.equal(first.source, 'remote'); assert.equal(first.sequence, 2);
+  assert.equal(first.assetId, newArtworkId); assert.equal(first.sha256, hashBytes(bytes1));
+  assert.deepEqual(service.state.requests.map(request => new URL(request.url).pathname), [platinum.url]);
+  assert.equal((await client.resolve(runtimeRef)).source, 'cache');
+  assert.equal(service.state.requests.length, 1, 'only assigned artwork is downloaded and repeat access hits cache');
+
+  // Publishing a new immutable asset rebinds the stable key; backend assignment stays identical.
+  const replacementId = '55555555-5555-4555-8555-555555555555';
+  const replacement = slot(backendAssignment.artworkKey, replacementId, bytes2);
+  service.state.release = envelope(3, bytes2, { slots: [classic, replacement] }); service.state.bytes = bytes2;
+  await client.refresh(); service.state.requests = [];
+  const revised = await client.resolve(runtimeRef);
+  assert.equal(revised.source, 'remote'); assert.equal(revised.sequence, 3);
+  assert.equal(revised.assetId, replacementId); assert.equal(revised.sha256, hashBytes(bytes2));
+  assert.notEqual(revised.sha256, first.sha256); assert.equal(runtimeRef.key, backendAssignment.artworkKey);
+  assert.deepEqual(service.state.requests.map(request => new URL(request.url).pathname), [replacement.url]);
+
+  service.state.offline = true; service.state.requests = [];
+  const restarted = new AssetClient(config, { storage, fetch: service.fetch });
+  assert.equal((await restarted.initialize()).sequence, 3);
+  const offline = await restarted.resolve({ key: backendAssignment.artworkKey, ...renderContract });
+  assert.equal(offline.source, 'cache'); assert.equal(offline.sequence, 3);
+  assert.deepEqual(offline.bytes, bytes2); assert.equal(service.state.requests.length, 0);
+});
+
+test('runtime artwork keys cannot supply URLs or bypass the app-owned render dimensions', async () => {
+  const service = delivery();
+  const card = { key: 'cards.classic', width: 800, height: 500 };
+  const published = { ...JSON.parse(envelope().payload).slots[0], ...card };
+  service.state.release = envelope(1, bytes1, { slots: [published] });
+  const client = new AssetClient(config, { storage: createMemoryStorage(), fetch: service.fetch });
+  await client.refresh(); service.state.requests = [];
+  assert.equal((await client.resolve({ ...card, key: 'cards.unknown' })).source, 'bundle');
+  assert.equal((await client.resolve({ ...card, width: 801 })).source, 'bundle');
+  assert.equal((await client.resolve({ ...card, height: 501 })).source, 'bundle');
+  for (const key of ['https://attacker.example/image.webp', 'cards/escape', '', '.cards', 'a'.repeat(121)]) {
+    await assert.rejects(client.resolve({ ...card, key }), /Invalid generated asset reference/);
+  }
+  for (const width of [0, 8193, 800.5, NaN, true]) await assert.rejects(client.resolve({ ...card, width }), /Invalid generated asset reference/);
+  assert.equal(service.state.requests.length, 0, 'unknown, malformed or incompatible references never fetch bodies');
+  // An extra caller-provided URL is ignored; only the independently signed descriptor can supply it.
+  const resolved = await client.resolve({ ...card, url: 'https://attacker.example/image.webp' });
+  assert.equal(resolved.source, 'remote');
+  assert.deepEqual(service.state.requests.map(request => request.url), [new URL(published.url, config.manifestUrl).href]);
+});
