@@ -34,25 +34,33 @@ function equivalent(left: unknown, right: unknown): boolean {
 
 function validateCells(slot: Record<string, unknown>, payload: Record<string, unknown>, config: AssetlibConfig): void {
   if (!('variants' in slot)) {
-    if ('cells' in slot) throw new Error('Appearance cells require declared variants.');
+    if ('cells' in slot) throw new Error('Variant cells require declared variants.');
     return;
   }
   const variants = slot.variants;
-  if (payload.variantSchemaVersion !== 1 || !record(variants) || Object.keys(variants).length !== 1 || !Array.isArray(variants.appearance) || variants.appearance.length < 1 || variants.appearance.length > 2 || variants.appearance.some(value => value !== 'light' && value !== 'dark') || new Set(variants.appearance).size !== variants.appearance.length) throw new Error('Invalid appearance variants.');
+  if (payload.variantSchemaVersion !== 1 || !record(variants) || !Object.keys(variants).length || Object.keys(variants).some(name => name !== 'appearance' && name !== 'arm')) throw new Error('Invalid variant axes.');
+  if ('appearance' in variants && (!Array.isArray(variants.appearance) || variants.appearance.length < 1 || variants.appearance.length > 2 || variants.appearance.some(value => value !== 'light' && value !== 'dark') || new Set(variants.appearance).size !== variants.appearance.length)) throw new Error('Invalid appearance variants.');
+  if ('arm' in variants && (!Array.isArray(variants.arm) || variants.arm.length < 1 || variants.arm.length > 4 || variants.arm.some(value => typeof value !== 'string' || value !== value.trim() || !/^[a-z][a-z0-9_-]{0,19}$/.test(value) || ['control', 'any', 'constructor', 'prototype', '__proto__'].includes(value)) || new Set(variants.arm).size !== variants.arm.length)) throw new Error('Invalid arm variants.');
+  const appearances = Array.isArray(variants.appearance) ? variants.appearance : [];
+  const arms = Array.isArray(variants.arm) ? variants.arm : [];
   if (!('cells' in slot)) return;
-  if (!Array.isArray(slot.cells) || slot.cells.length > variants.appearance.length) throw new Error('Invalid appearance cells.');
-  const appearances = new Set<string>();
+  if (!Array.isArray(slot.cells) || slot.cells.length > (arms.length + 1) * (appearances.length + 1) - 1) throw new Error('Invalid variant cells.');
+  const coordinates = new Set<string>();
   for (const cell of slot.cells) {
-    if (!record(cell) || typeof cell.appearance !== 'string' || !variants.appearance.includes(cell.appearance) || appearances.has(cell.appearance)) throw new Error('Invalid or duplicate appearance cell.');
-    appearances.add(cell.appearance);
+    if (!record(cell) || !('appearance' in cell || 'arm' in cell)) throw new Error('Variant cells require at least one arm or appearance coordinate.');
+    if ('appearance' in cell && !appearances.includes(cell.appearance)) throw new Error('Variant cell appearance is not declared.');
+    if ('arm' in cell && !arms.includes(cell.arm)) throw new Error('Variant cell arm is not declared.');
+    const coordinate = JSON.stringify([cell.arm ?? null, cell.appearance ?? null]);
+    if (coordinates.has(coordinate)) throw new Error('Duplicate variant cell coordinates.');
+    coordinates.add(coordinate);
     validateDescriptor(cell, Number(slot.width), Number(slot.height), config, payload.renditionSchemaVersion);
-    if ('defaultState' in cell) throw new Error('Appearance cells use the placement default state.');
+    if ('defaultState' in cell) throw new Error('Variant cells use the placement default state.');
     if (record(slot.states)) {
-      if (!record(cell.states) || Object.keys(cell.states).length !== Object.keys(slot.states).length || Object.keys(slot.states).some(name => !Object.hasOwn(cell.states as object, name))) throw new Error('Appearance state family must contain every declared state.');
+      if (!record(cell.states) || Object.keys(cell.states).length !== Object.keys(slot.states).length || Object.keys(slot.states).some(name => !Object.hasOwn(cell.states as object, name))) throw new Error('Variant state family must contain every declared state.');
       validateStateImages(cell.states, slot, config, payload.renditionSchemaVersion);
       const fallback = cell.states[String(slot.defaultState)] as Record<string, unknown>;
-      if (['assetId', 'sha256', 'url', 'mime', 'bytes', 'renditions', 'accessibility'].some(name => !equivalent(cell[name], fallback[name]))) throw new Error('Appearance artwork must match its default state.');
-    } else if ('states' in cell) throw new Error('A stateless placement cannot have appearance states.');
+      if (['assetId', 'sha256', 'url', 'mime', 'bytes', 'renditions', 'accessibility'].some(name => !equivalent(cell[name], fallback[name]))) throw new Error('Variant artwork must match its default state.');
+    } else if ('states' in cell) throw new Error('A stateless placement cannot have variant states.');
   }
 }
 

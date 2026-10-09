@@ -2,7 +2,7 @@ import { ed25519 } from '@noble/curves/ed25519.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 import { base64 } from '@scure/base';
-import type { AssetlibConfig, AssetMime, AssetRef, AssetPage, AssetPageOptions, AssetPagePayload, CachePolicy, StorageMime, CatalogAsset, DynamicAssetRef, StateSetRef, ResolvedStateSet, ManifestSlot, ClientOptions, ClientStatus, ManifestPayload, RefreshResult, ResolvedAsset, ResolvedAnimation, ResolveOptions, SignedManifest } from './types.js';
+import type { AssetlibConfig, AssetMime, AssetRef, AssetPage, AssetPageOptions, AssetPagePayload, ArmSource, CachePolicy, StorageMime, CatalogAsset, DynamicAssetRef, StateSetRef, ResolvedStateSet, ManifestSlot, ClientOptions, ClientStatus, ManifestPayload, RefreshResult, ResolvedAsset, ResolvedAnimation, ResolveOptions, SignedManifest } from './types.js';
 export type * from './types.js';
 import { selectAssetCandidates, supportedFormats, targetPixels, validRenditionHeader, validateRenditions, type AssetCandidate } from './renditions.js';
 export { selectAssetCandidates } from './renditions.js';
@@ -78,12 +78,18 @@ export function verifySignedManifest(input: unknown, config: AssetlibConfig): { 
 const throwIfAborted = (signal?: AbortSignal): void => { if (signal?.aborted) throw new Error('Assetlib request cancelled.'); };
 const cachePolicy = (policy: unknown): CachePolicy => { if (policy !== 'disk' && policy !== 'memory' && policy !== 'none') throw new Error('Unknown image cache policy.'); return policy; };
 const validateAppearance = (appearance: unknown): void => { if (appearance !== undefined && appearance !== 'light' && appearance !== 'dark') throw new Error('Unknown artwork appearance.'); };
+const validateArm = (arm: unknown): void => { if (arm !== undefined && typeof arm !== 'string') throw new Error('Artwork arm must be a string.'); };
 
-function appearanceSlot(slot: ManifestSlot, appearance: ResolveOptions['appearance']): ManifestSlot {
-  const cell = slot.cells?.find(value => value.appearance === appearance);
-  // Project a fresh descriptor so an absent rendition or description never leaks from Any.
-  return cell ? { ...cell, key: slot.key, screen: slot.screen, width: slot.width, height: slot.height } : slot;
+function variantSlot(slot: ManifestSlot, arm: string | undefined, appearance: ResolveOptions['appearance']): { slot: ManifestSlot; arm: string | null } {
+  const find = (selectedArm: string | undefined, selectedAppearance: ResolveOptions['appearance']) => slot.cells?.find(value => value.arm === selectedArm && value.appearance === selectedAppearance);
+  const cell = (arm !== undefined ? find(arm, appearance) ?? find(arm, undefined) : undefined)
+    ?? (appearance !== undefined ? find(undefined, appearance) : undefined);
+  // Project a fresh descriptor so optional metadata never leaks from Control/Any.
+  return cell ? { slot: { ...cell, key: slot.key, screen: slot.screen, width: slot.width, height: slot.height }, arm: cell.arm ?? null } : { slot, arm: null };
 }
+
+type ArmDecision = { arm?: string; armSource: ArmSource; reason?: string };
+const decisionMessage = (message: string, decision: ArmDecision): string => decision.reason ? `${message} ${decision.reason}` : message;
 
 async function fetchBounded(fetcher: typeof fetch, url: string, maxBytes: number, timeoutMs: number, accept = 'image/webp', signal?: AbortSignal, noStore = false): Promise<Uint8Array> {
   throwIfAborted(signal);
@@ -240,6 +246,17 @@ export class AssetClient {
     while (this.memory.size > SDK_LIMITS.cacheEntries || [...this.memory.values()].reduce((sum, value) => sum + value.byteLength, 0) > SDK_LIMITS.cacheBytes) this.memory.delete(this.memory.keys().next().value!);
   }
   clearMemoryCache(): void { this.memory.clear(); }
+  private async decideArm(ref: AssetRef, slot: ManifestSlot | undefined, options: ResolveOptions): Promise<ArmDecision> {
+    if (options.arm !== undefined) return { arm: options.arm === 'control' ? undefined : options.arm, armSource: 'explicit' };
+    if (!slot?.variants?.arm?.length || !this.options.decide) return { armSource: 'control' };
+    try {
+      const arm = await this.options.decide({ key: ref.key, arms: Object.freeze([...slot.variants.arm]), ...(options.appearance !== undefined ? { appearance: options.appearance } : {}) });
+      if (arm !== undefined && slot.variants.arm.includes(arm)) return { arm, armSource: 'decision' };
+      return { armSource: 'invalid-decision', reason: arm === undefined ? 'Decision returned no arm; using control.' : 'Decision returned an undeclared arm; using control.' };
+    } catch {
+      return { armSource: 'invalid-decision', reason: 'Decision callback threw; using control.' };
+    }
+  }
   private async resolveDescriptor(slot: ManifestSlot, sequence: number, download: boolean, options: ResolveOptions): Promise<ResolvedAsset> {
     validateAppearance(options.appearance);
     const policy = cachePolicy(options.cachePolicy ?? this.policy);
@@ -247,9 +264,11 @@ export class AssetClient {
     let message = 'No compatible image bytes are available.';
     for (const candidate of selectAssetCandidates(slot, target, this.formats)) {
       throwIfAborted(options.signal);
-      // Storage keys remain 64-hex values while separating requested appearances.
-      const cacheKey = options.appearance === undefined ? candidate.sha256 : hashBytes(utf8ToBytes(`appearance:${options.appearance}:${candidate.sha256}`));
-      const identity = { mime: candidate.mime, sha256: candidate.sha256, cacheKey, assetId: slot.assetId, cachePolicy: policy,
+      // Preserve existing control keys; isolate every requested non-control arm and appearance.
+      const cacheKey = options.arm !== undefined && options.arm !== 'control'
+        ? hashBytes(utf8ToBytes(JSON.stringify(['arm', options.arm, options.appearance ?? null, candidate.sha256])))
+        : options.appearance === undefined ? candidate.sha256 : hashBytes(utf8ToBytes(`appearance:${options.appearance}:${candidate.sha256}`));
+      const identity = { arm: null, armSource: 'control' as const, mime: candidate.mime, sha256: candidate.sha256, cacheKey, assetId: slot.assetId, cachePolicy: policy,
         ...(slot.accessibility ? { accessibility: Object.freeze({ defaultLocale: slot.accessibility.defaultLocale, descriptions: Object.freeze({ ...slot.accessibility.descriptions }) }) } : {}),
         ...(candidate.isRendition ? { pixelWidth: candidate.width, pixelHeight: candidate.height } : {}) };
       try {
@@ -265,46 +284,58 @@ export class AssetClient {
         return { source: 'remote', sequence, message: 'Downloaded and verified artwork.', bytes, ...identity };
       } catch (error) { throwIfAborted(options.signal); message = error instanceof Error ? error.message : 'Artwork could not be loaded.'; }
     }
-    return { source: 'bundle', sequence: null, cachePolicy: policy, message };
+    return { source: 'bundle', sequence: null, arm: null, armSource: 'control', cachePolicy: policy, message };
   }
   async resolve(ref: AssetRef, options: ResolveOptions = {}): Promise<ResolvedAsset> {
     if (!validKey(ref.key) || !integer(ref.width, 1, 8192) || !integer(ref.height, 1, 8192)) throw new Error('Invalid generated asset reference.');
     if (ref.bundledAccessibility !== undefined) validateAccessibility(ref.bundledAccessibility);
     validateAppearance(options.appearance);
+    validateArm(options.arm);
     targetPixels(ref, options); cachePolicy(options.cachePolicy ?? this.policy); throwIfAborted(options.signal);
     const history = await this.snapshot();
+    const matches = (item: ManifestSlot) => item.key === ref.key && item.width === ref.width && item.height === ref.height;
+    const decision = await this.decideArm(ref, history[0]?.payload.slots.find(matches), options);
+    throwIfAborted(options.signal);
+    const resolvedOptions = { ...options, arm: decision.arm };
     let message = this.storageFailure ?? 'No compatible published artwork is available.';
     for (const [index, { payload }] of history.entries()) {
-      const slot = payload.slots.find(item => item.key === ref.key && item.width === ref.width && item.height === ref.height);
+      const slot = payload.slots.find(matches);
       if (!slot) continue;
-      const result = await this.resolveDescriptor(appearanceSlot(slot, options.appearance), payload.sequence, index === 0, options);
-      if (result.source !== 'bundle') return index ? { ...result, message: `Using verified artwork from release ${payload.sequence}. ${message}` } : result;
+      const selected = variantSlot(slot, decision.arm, options.appearance);
+      const result = await this.resolveDescriptor(selected.slot, payload.sequence, index === 0, resolvedOptions);
+      if (result.source !== 'bundle') return { ...result, arm: selected.arm, armSource: decision.armSource, message: decisionMessage(index ? `Using verified artwork from release ${payload.sequence}. ${message}` : result.message, decision) };
       message = result.message;
     }
     throwIfAborted(options.signal);
-    return { source: 'bundle', sequence: null, message: `Using bundled artwork. ${message}`, ...(ref.bundledAccessibility ? { accessibility: ref.bundledAccessibility } : {}) };
+    return { source: 'bundle', sequence: null, arm: null, armSource: decision.armSource, message: decisionMessage(`Using bundled artwork. ${message}`, decision), ...(ref.bundledAccessibility ? { accessibility: ref.bundledAccessibility } : {}) };
   }
   async resolveStateSet(ref: StateSetRef, options: ResolveOptions = {}): Promise<ResolvedStateSet> {
     if (!validKey(ref.key) || !integer(ref.width, 1, 8192) || !integer(ref.height, 1, 8192) || !validStateRef(ref.states)) throw new Error('Invalid state set reference.');
     validateAppearance(options.appearance);
+    validateArm(options.arm);
     targetPixels(ref, options); cachePolicy(options.cachePolicy ?? this.policy); throwIfAborted(options.signal);
     const history = await this.snapshot();
+    const matches = (item: ManifestSlot) => item.key === ref.key && item.width === ref.width && item.height === ref.height;
+    const decision = await this.decideArm(ref, history[0]?.payload.slots.find(matches), options);
+    throwIfAborted(options.signal);
+    const resolvedOptions = { ...options, arm: decision.arm };
     for (const [index, { payload }] of history.entries()) {
-      const placement = payload.slots.find(item => item.key === ref.key && item.width === ref.width && item.height === ref.height);
-      const slot = placement && appearanceSlot(placement, options.appearance);
+      const placement = payload.slots.find(matches);
+      const selected = placement && variantSlot(placement, decision.arm, options.appearance);
+      const slot = selected?.slot;
       if (!slot?.states || Object.keys(slot.states).length !== ref.states.length || ref.states.some(name => !Object.hasOwn(slot.states!, name))) continue;
       const entries = await Promise.all(ref.states.map(async name => {
         // Optional metadata and renditions belong to this state, never to the default image.
-        const result = await this.resolveDescriptor({ ...slot.states![name], key: slot.key, screen: slot.screen, width: slot.width, height: slot.height }, payload.sequence, index === 0, options);
-        return [name, result] as const;
+        const result = await this.resolveDescriptor({ ...slot.states![name], key: slot.key, screen: slot.screen, width: slot.width, height: slot.height }, payload.sequence, index === 0, resolvedOptions);
+        return [name, { ...result, arm: selected!.arm, armSource: decision.armSource, message: decisionMessage(result.message, decision) }] as const;
       }));
       throwIfAborted(options.signal);
       if (entries.some(([, value]) => value.source === 'bundle') || entries.reduce((sum, [, value]) => sum + (value.bytes?.byteLength ?? 0), 0) > SDK_LIMITS.cacheBytes) continue;
       return { source: entries.some(([, value]) => value.source === 'remote') ? 'remote' : 'cache', sequence: payload.sequence,
-        message: 'Complete state set pinned to one release.', states: Object.freeze(Object.fromEntries(entries)) };
+        arm: selected!.arm, armSource: decision.armSource, message: decisionMessage('Complete state set pinned to one release.', decision), states: Object.freeze(Object.fromEntries(entries)) };
     }
     throwIfAborted(options.signal);
-    return { source: 'bundle', sequence: null, message: 'Using the complete bundled state set.', states: Object.freeze({}) };
+    return { source: 'bundle', sequence: null, arm: null, armSource: decision.armSource, message: decisionMessage('Using the complete bundled state set.', decision), states: Object.freeze({}) };
   }
   async loadAssetPage(options: AssetPageOptions = {}): Promise<AssetPage> {
     const limit = options.limit ?? 20;

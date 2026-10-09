@@ -95,6 +95,49 @@ test('apply preserves attributes, declarations, imports and directives, regenera
   assert.deepEqual(await snapshot(f.root), before);
 });
 
+test('appends compact placements to the mobile-lab catalog without reformatting its existing lines', async t => {
+  const original = await readFile(new URL('./fixtures/mobile-lab.catalog.json', import.meta.url), 'utf8');
+  for (const indent of ['  ', '    ', '\t']) {
+    const compact = original.replace(/^( +)/gm, spaces => indent.repeat(spaces.length / 2));
+    const f = await fixture(t, JSON.parse(compact));
+    await f.put('assetlib.catalog.json', compact);
+    await f.put('src/Lab.tsx', `import { Image } from 'react-native'; const App = () => <Image source={require('../assets/coast-hero.png')} />;`);
+    const dryRun = await f.run();
+    assert.equal(dryRun.code, 0, dryRun.stdout);
+    assert.equal(await f.get('assetlib.catalog.json'), compact);
+    const applied = await f.run(['--apply']);
+    assert.equal(applied.code, 0, applied.stdout);
+    const expected = compact.replace(/(\r?\n[\t ]*\]\r?\n\})/, `,\n${indent.repeat(2)}{ "key": "lab.coast-hero", "symbol": ["Lab", "coastHero"], "width": 1200, "height": 900, "screen": "lab" }$1`);
+    assert.equal(await f.get('assetlib.catalog.json'), expected);
+    assert.equal(replayUnified(compact, dryRun.report.files.find(file => file.path === 'assetlib.catalog.json').diff), expected);
+    assert.equal(await f.get('src/assets.generated.ts'), generateCatalog(JSON.parse(expected)));
+    assert.equal((await f.run()).code, 3);
+  }
+});
+
+test('uses two-space expanded formatting whenever any existing placement spans multiple lines', async t => {
+  const f = await fixture(t);
+  const original = JSON.stringify(seed, null, 4) + '\n';
+  await f.put('assetlib.catalog.json', original);
+  await f.put('src/Lab.tsx', `import { Image } from 'react-native'; const App = () => <Image source={require('../assets/coast-hero.png')} />;`);
+  const result = await f.run(['--apply']);
+  assert.equal(result.code, 0, result.stdout);
+  const expected = { ...seed, placements: [...seed.placements, { key: 'lab.coast-hero', symbol: ['Lab', 'coastHero'], width: 1200, height: 900, screen: 'lab' }] };
+  assert.equal(await f.get('assetlib.catalog.json'), JSON.stringify(expected, null, 2) + '\n');
+});
+
+test('compact append preserves CRLF and metadata containing placements-like text', async t => {
+  const f = await fixture(t);
+  const original = '{\r\n  "note": "placements: [ ] { }",\r\n  "schemaVersion": 1,\r\n  "placements": [\r\n    { "key": "existing.art", "symbol": ["Existing", "art"], "width": 100, "height": 100 }\r\n  ]\r\n}\r\n';
+  await f.put('assetlib.catalog.json', original);
+  await f.put('src/Lab.tsx', `import { Image } from 'react-native'; const App = () => <Image source={require('../assets/coast-hero.png')} />;`);
+  const result = await f.run(['--apply']);
+  assert.equal(result.code, 0, result.stdout);
+  const text = await f.get('assetlib.catalog.json');
+  assert.ok(!text.replaceAll('\r\n', '').includes('\n'));
+  assert.equal(text, original.replace('100 }\r\n', '100 },\r\n    { "key": "lab.coast-hero", "symbol": ["Lab", "coastHero"], "width": 1200, "height": 900, "screen": "lab" }\r\n'));
+});
+
 test('reports unsupported require expressions and ambiguous constants with exact path and line', async t => {
   const f = await fixture(t);
   const lines = [
@@ -129,10 +172,10 @@ test('reports unsupported require expressions and ambiguous constants with exact
 
 test('filters icon-sized and essential files and honors both-edge min-edge semantics and density names', async t => {
   const f = await fixture(t);
-  for (const [name, width, height] of [['small.png', 63, 63], ['wide.png', 64, 12], ['app-icon.png', 1200, 900], ['splash-art.png', 1200, 900], ['adaptive-icon.png', 1200, 900], ['icons/landscape.png', 1200, 900], ['art@2x.png', 600, 400]]) await f.put('assets/' + name, png(width, height));
-  await f.put('src/Lab.jsx', `import { Image } from 'expo-image';\nexport const App = () => <>${['small.png', 'wide.png', 'app-icon.png', 'splash-art.png', 'adaptive-icon.png', 'icons/landscape.png', 'art@2x.png'].map(name => `<Image source={require('../assets/${name}')} />`).join('\n')}</>;`);
+  for (const [name, width, height] of [['small.png', 63, 63], ['wide.png', 64, 12], ['app-icon.png', 1200, 900], ['splash-art.png', 1200, 900], ['adaptive-icon.png', 1200, 900], ['icons/landscape.png', 1200, 900], ['wordmark.png', 1200, 900], ['Logo-large.png', 1200, 900], ['BRAND-art.png', 1200, 900], ['art@2x.png', 600, 400]]) await f.put('assets/' + name, png(width, height));
+  await f.put('src/Lab.jsx', `import { Image } from 'expo-image';\nexport const App = () => <>${['small.png', 'wide.png', 'app-icon.png', 'splash-art.png', 'adaptive-icon.png', 'icons/landscape.png', 'wordmark.png', 'Logo-large.png', 'BRAND-art.png', 'art@2x.png'].map(name => `<Image source={require('../assets/${name}')} />`).join('\n')}</>;`);
   const result = await f.run(); assert.equal(result.code, 0, result.stdout);
-  assert.equal(result.report.summary.candidates, 2); assert.equal(result.report.skipped.filter(item => item.reason === 'essential').length, 4);
+  assert.equal(result.report.summary.candidates, 2); assert.equal(result.report.skipped.filter(item => item.reason === 'essential').length, 7);
   assert.equal(result.report.skipped.filter(item => item.reason === 'icon-sized').length, 1);
   assert.deepEqual(result.report.candidates.map(item => [item.key, item.width, item.height]), [['lab.wide', 64, 12], ['lab.art-2x', 600, 400]]);
   const larger = await f.run(['--min-edge', '100']); assert.equal(larger.report.summary.candidates, 1);

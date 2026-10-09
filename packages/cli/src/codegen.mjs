@@ -11,7 +11,9 @@ export function generateCatalog(catalog) {
     keys.add(placement.key);
     if ('variants' in placement) {
       const variants = placement.variants;
-      if (!variants || typeof variants !== 'object' || Array.isArray(variants) || Object.keys(variants).length !== 1 || !Array.isArray(variants.appearance) || !variants.appearance.length || new Set(variants.appearance).size !== variants.appearance.length || variants.appearance.some(value => value !== 'light' && value !== 'dark')) throw new Error('Variants require only appearance with unique light or dark values.');
+      if (!variants || typeof variants !== 'object' || Array.isArray(variants) || !Object.keys(variants).length || Object.keys(variants).some(axis => axis !== 'appearance' && axis !== 'arm')) throw new Error('Variants support only appearance and arm axes.');
+      if ('appearance' in variants && (!Array.isArray(variants.appearance) || !variants.appearance.length || new Set(variants.appearance).size !== variants.appearance.length || variants.appearance.some(value => value !== 'light' && value !== 'dark'))) throw new Error('Variants appearance requires unique light or dark values.');
+      if ('arm' in variants && (!Array.isArray(variants.arm) || variants.arm.length < 1 || variants.arm.length > 4 || new Set(variants.arm).size !== variants.arm.length || variants.arm.some(value => typeof value !== 'string' || value !== value.trim() || !/^[a-z][a-z0-9_-]{0,19}$/.test(value) || ['control', 'any', 'constructor', 'prototype', '__proto__'].includes(value)))) throw new Error('Variants arm requires 1–4 unique valid arm names.');
     }
     if (placement.states !== undefined && (!Array.isArray(placement.states) || placement.states.length < 2 || placement.states.length > 16 || new Set(placement.states).size !== placement.states.length || placement.states.some(value => typeof value !== 'string' || !/^[a-z][a-z0-9_-]{0,39}$/.test(value) || ['constructor', 'prototype', '__proto__'].includes(value)))) throw new Error('State sets require 2–16 unique named states.');
     if ('bundledAccessibility' in placement) validateAccessibility(placement.bundledAccessibility);

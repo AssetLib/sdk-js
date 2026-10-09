@@ -57,6 +57,8 @@ Obtain public app configuration from your authenticated Assetlib workspace. It c
 
 See the [core guide](packages/sdk-core/README.md) for the checked-in catalog format and offline generator. Application code uses generated references such as `AppAssets.Travel.coast`; compatible artwork updates preserve that reference. Schema v1 still uses placement keys, with exact width/height contracts. Renames and contract changes require a coordinated migration.
 
+The local `phase-1-environments` preview supports appearance and arm variants, with an optional app-supplied `decide` callback and `arm` props on Expo placement/state components. See the [resolution and decision contract](packages/sdk-core/README.md#appearance-and-arm-variants). The [CLI](packages/cli/README.md) preserves these declarations during code generation and sync; `adopt` preserves compact catalog placement lines and skips essential icon, splash, mark, logo, and brand images.
+
 ## Audit an existing app
 
 The read-only audit is on npm as [`@assetlib/audit`](https://www.npmjs.com/package/@assetlib/audit). With Node 22+:
@@ -79,7 +81,7 @@ Signatures protect against modified delivery responses only when the app trusts 
 
 The default request deadline is eight seconds, images are limited to eight MiB, and the cache is limited to 50 MiB / 100 files per configuration. Eight signed releases are retained. [Detailed limits](packages/sdk-core/README.md#verification-and-operating-limits)
 
-Source status callbacks describe SDK resolution; they are not analytics impressions. Experiment assignment, analytics routing, automatic source migration, key rotation, and background prefetching are outside this preview. Actual native device and hosted web validation must be reported separately from unit tests and TypeScript checks.
+Source status callbacks describe SDK resolution; they are not analytics impressions. The app's experiment tool owns assignment and must log exposure after rendering, never from `decide`. Analytics routing, key rotation, and background prefetching are outside this preview. Actual native device and hosted web validation must be reported separately from unit tests and TypeScript checks.
 
 ## Develop
 

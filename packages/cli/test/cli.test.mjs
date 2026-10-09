@@ -11,7 +11,7 @@ import { generateCatalog } from '../src/codegen.mjs';
 import { main } from '../src/cli.mjs';
 
 const bin = fileURLToPath(new URL('../bin/assetlib.mjs', import.meta.url));
-const catalog = { schemaVersion: 1, placements: [{ key: 'travel.coast', symbol: ['Travel', 'coast'], width: 1200, height: 900, screen: 'Explore', variants: { appearance: ['dark'] } }] };
+const catalog = { schemaVersion: 1, placements: [{ key: 'travel.coast', symbol: ['Travel', 'coast'], width: 1200, height: 900, screen: 'Explore', variants: { appearance: ['dark'], arm: ['b', 'c'] } }] };
 const org = '11111111-1111-4111-8111-111111111111';
 const app = '22222222-2222-4222-8222-222222222222';
 const token = 'alk_example_secret_never_print';

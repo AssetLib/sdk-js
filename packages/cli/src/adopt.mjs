@@ -4,6 +4,7 @@ import path from 'node:path';
 import ts from 'typescript';
 import { imageSize } from 'image-size';
 import { generateCatalog } from './codegen.mjs';
+import { formatCatalog } from './catalog.mjs';
 
 // Match the local audit's conservative source and image budgets.
 const LIMITS = { entries: 20000, files: 500, fileBytes: 256 * 1024, totalBytes: 2 * 1024 * 1024, depth: 32, imageBytes: 32 * 1024 * 1024, totalImageBytes: 128 * 1024 * 1024 };
@@ -291,7 +292,7 @@ export async function adopt({ catalogPath, catalog, src, generated: generatedOpt
       if (!argument.text.startsWith('./') && !argument.text.startsWith('../')) { skip('non-relative-path'); continue; }
       const image = path.resolve(path.dirname(file), argument.text);
       if (!contained(root, image)) { skip('image-outside-root'); continue; }
-      if (/icon|splash|adaptive-icon/i.test(path.basename(image)) || path.relative(root, image).split(path.sep).slice(0, -1).some(part => part.toLowerCase() === 'icons')) { skip('essential'); continue; }
+      if (/icon|splash|adaptive-icon|mark|logo|brand/i.test(path.basename(image)) || path.relative(root, image).split(path.sep).slice(0, -1).some(part => part.toLowerCase() === 'icons')) { skip('essential'); continue; }
       let size = imageCache.get(image);
       if (!size) {
         try {
@@ -342,7 +343,10 @@ export async function adopt({ catalogPath, catalog, src, generated: generatedOpt
     if (before !== after) plans.push({ file, before, after });
   }
   if (report.candidates.length) {
-    const catalogText = JSON.stringify(nextCatalog, null, 2) + '\n';
+    const originalCatalog = (await readBounded(root, catalogPath, 128 * 1024)).toString('utf8');
+    if (JSON.stringify(JSON.parse(originalCatalog)) !== JSON.stringify(catalog)) throw new Error('Catalog changed during adoption; rerun the command.');
+    originals.set(catalogPath, originalCatalog);
+    const catalogText = formatCatalog(nextCatalog, originalCatalog);
     if (Buffer.byteLength(catalogText) > 128 * 1024) throw new Error('Updated catalog exceeds 128 KiB.');
     const generatedText = generateCatalog(nextCatalog);
     for (const source of sourcePlans) await plan(source.file, editSource(source.info, source.selected, generated, localClient ? relativeImport(source.file, clientBase) : clientSpecifier, clientExport));

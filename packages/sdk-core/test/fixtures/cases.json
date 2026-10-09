@@ -444,6 +444,36 @@
       "file": "manifests/invalid/appearance-version.json",
       "verification": "reject",
       "reason": "Unknown variant schema version is rejected."
+    },
+    {
+      "file": "manifests/valid-arm-seq9.json",
+      "verification": "accept",
+      "reason": "Declared arm-only cell with implicit control fallback; unbound arm c inherits control."
+    },
+    {
+      "file": "manifests/valid-arm-appearance-seq10.json",
+      "verification": "accept",
+      "reason": "Independent arm and appearance coordinates include control/dark, b/any, b/dark and c/dark."
+    },
+    {
+      "file": "manifests/valid-arm-stateful-seq11.json",
+      "verification": "accept",
+      "reason": "Each arm and appearance coordinate owns a complete state family matching its default image."
+    },
+    {
+      "file": "manifests/invalid/arm-undeclared-cell.json",
+      "verification": "reject",
+      "reason": "A signed cell arm must be declared by its placement."
+    },
+    {
+      "file": "manifests/invalid/arm-duplicate-coordinates.json",
+      "verification": "reject",
+      "reason": "Duplicate arm and appearance coordinate pairs are forbidden."
+    },
+    {
+      "file": "manifests/invalid/arm-missing-coordinates.json",
+      "verification": "reject",
+      "reason": "A cell without arm or appearance is invalid; control/any belongs to the legacy slot fields."
     }
   ],
   "stateful": [

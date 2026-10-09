@@ -20,7 +20,7 @@ const asset = await client.resolve(AppAssets.Travel.coast, { pixelWidth: 600, pi
 // source is 'remote', 'cache', or 'bundle'. Render a bundled image for 'bundle'.
 ```
 
-`refresh()` returns `{ updated, sequence, error? }`. Errors preserve the previous accepted release. `resolve()` returns `{ source, sequence, message, bytes?, sha256?, assetId?, mime?, pixelWidth?, pixelHeight? }`. `getStatus()` returns `{ initialized, sequence, lastError }`. Use one long-lived client per configured app.
+`refresh()` returns `{ updated, sequence, error? }`. Errors preserve the previous accepted release. `resolve()` returns `{ source, sequence, message, arm, armSource, bytes?, sha256?, assetId?, mime?, pixelWidth?, pixelHeight? }`. `getStatus()` returns `{ initialized, sequence, lastError }`. Use one long-lived client per configured app.
 
 Public config: `{ schemaVersion: 1, orgId, appId, environment: 'staging' | 'production', manifestUrl, pinnedPublicKey, keyId? }`. Use the matching `/api/delivery/{orgId}/{appId}/environments/{environment}/manifest` URL; the legacy `/api/delivery/{orgId}/{appId}/manifest` URL remains valid for production. Signed manifests and asset pages must match the configured environment. The PEM Ed25519 public key must come from a trusted provisioning step independent of the delivery response. Public config contains no admin credentials. Importing it from an untrusted source changes the trust anchor; verification cannot establish that the source belongs to your organization.
 
@@ -67,18 +67,44 @@ node node_modules/@assetlib/sdk-core/bin/codegen.mjs assetlib.catalog.json > src
 
 Use `AppAssets.Travel.coast` in application code. Existing compatible artwork updates do not require regenerating this catalog. Adding a new application placement does. Schema v1 identifies placements by key and exact width/height; stable placement IDs and separately versioned contracts are not implemented yet. Renaming a key requires a coordinated migration, not simply renaming it in the console.
 
-## Appearance variants
+## Appearance and arm variants
 
-A catalog placement can declare `"variants": { "appearance": ["dark"] }` (or `light`, or both). Code generation preserves this declaration on `AssetRef` and `StateSetRef`; `assetlib sync` includes it in build registration. Only the `appearance` axis is supported, with one or two unique `light`/`dark` values.
+A catalog placement can declare either or both axes: `"variants": { "appearance": ["dark"], "arm": ["b", "c"] }`. Code generation preserves this declaration on `AssetRef` and `StateSetRef`; `assetlib sync` includes it in build registration. Appearance accepts one or two unique `light`/`dark` values. Arms accept one to four unique strings matching `^[a-z][a-z0-9_-]{0,19}$`, excluding `control`, `any`, `constructor`, `prototype`, and `__proto__`. Unknown axes and empty declarations are rejected. Control is implicit and is never listed in `variants.arm`.
 
 ```ts
-const image = await client.resolve(AppAssets.Travel.coast, { appearance: 'dark' });
-const family = await client.resolveStateSet(AppAssets.Tasks.garden, { appearance: 'dark' });
+const image = await client.resolve(AppAssets.Travel.coast, { arm: 'b', appearance: 'dark' });
+const family = await client.resolveStateSet(AppAssets.Tasks.garden, { arm: 'b', appearance: 'dark' });
 ```
 
-Signed manifests declare `variantSchemaVersion: 1` and provide each placement's `variants` and bound `cells`. Resolution selects the requested appearance cell if present, otherwise the placement's existing Any image. Omitting `appearance` selects Any. Each stateful cell must contain the entire declared state family; states are never borrowed from another appearance. Descriptions and renditions come from the selected cell itself.
+Signed manifests retain `variantSchemaVersion: 1` and provide each placement's `variants` and bound `cells`. Cells omit `arm` for control and omit `appearance` for Any; at least one coordinate must be present. Duplicate coordinates, undeclared values, and incomplete state families reject the manifest. Resolution selects the first bound coordinate in this order:
 
-Image cache keys include the requested appearance, and retained releases use the same selection rule when providing cached fallback. `ResolvedAsset.sha256` remains the content hash; `cacheKey`, when present, identifies the storage entry. Custom adapters that open cached files should use `cacheKey ?? sha256`. Existing manifests remain supported. `resolveAnimation` continues to use Any, and asset-page payloads remain unchanged.
+1. Requested arm and appearance.
+2. Requested arm and Any appearance.
+3. Control arm and requested appearance.
+4. The placement's legacy fields (Control/Any).
+
+Omitting `appearance` requests Any. An explicit `arm: 'control'` bypasses decisions and requests control. An undeclared explicit arm inherits control through the same order. No other arm or appearance supplies artwork. Each stateful coordinate supplies an entire family; individual states are never mixed between coordinates or releases. Descriptions and renditions belong to the selected descriptor.
+
+Image cache keys include the requested arm and appearance, even when the artwork inherits control. Retained releases use the same selection order and the same decision, with cached bytes only. `ResolvedAsset.sha256` remains the content hash; `cacheKey`, when present, identifies the storage entry. Custom adapters that open cached files should use `cacheKey ?? sha256`. Existing manifests and control cache keys remain supported. `resolveAnimation` continues to use Control/Any and never calls `decide`; asset-page payloads remain unchanged.
+
+## App-supplied decisions
+
+```ts
+const client = createAssetClient(config, {
+  storage: durableStorage,
+  decide: async ({ key, arms, appearance }) => {
+    // Read an assignment from your app's experiment tool without logging exposure.
+    return experimentAssignments[key];
+  },
+});
+const image = await client.resolve(AppAssets.Travel.coast, { appearance: 'dark' });
+```
+
+`decide` may return a declared arm or a promise for one. It runs once per `resolve` or `resolveStateSet` call when no explicit arm was supplied and the current compatible signed slot declares arms. The callback receives the placement key, an immutable array of declared arms, and the requested appearance when present. It never runs for slots without arms, missing slots, or before any signed manifest is available. The SDK does not persist assignment decisions; the app's experiment tool controls assignment stability.
+
+An undefined, undeclared, or throwing/rejected result selects control, returns `armSource: 'invalid-decision'`, and explains why in `message`. Without a callback, omitted arms use `armSource: 'control'`. Explicit requests use `'explicit'`; accepted callback assignments use `'decision'`.
+
+Every resolved image and state family reports `arm: string | null`: the arm of the artwork actually selected, or `null` for control or bundled fallback. `armSource` records how the request was chosen even when it inherits control or uses the bundle. State members carry the family's arm metadata. These are resolution diagnostics. **Exposure must be logged by the app's experiment tool after the intended artwork is rendered, never from this callback.** A decision can lead to a cache lookup, fallback, cancellation, or artwork that is never displayed.
 
 ## Select only the user's assigned catalog entries
 

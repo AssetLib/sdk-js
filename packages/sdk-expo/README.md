@@ -36,7 +36,7 @@ await client.refresh(); // Explicit network check.
 
 Create a long-lived client outside repeated renders. After an explicit `refresh()`, increment `revision` to request the current artwork. `AssetlibImage` initially displays the bundled fallback, then a verified local image. A native/browser image decode error returns to the bundled image. Supply a stable `fallback` value, such as React Native's numeric `require()` result.
 
-`onStatus` reports source selection and verification, not a user impression or proof that the image was visible. Do not send experiment exposure events from this callback. App layout, accessibility labels, image sizing, and refresh policy remain app-owned. Rendering uses `expo-image` for downloaded PNG/WebP support on iOS and Android; props follow Expo Image except `cachePolicy`, which controls Assetlib's verified byte retention. The renderer's independent cache is always disabled. Pending resolution is cancelled when a component unmounts or changes its asset request.
+`onStatus` reports source selection and verification, including the effective `arm` (`null` for control) and `armSource` (`explicit`, `decision`, `control`, or `invalid-decision`). Initial bundle and renderer-failure statuses use `arm: null` and `armSource: 'control'`; resolved statuses preserve the core's decision diagnostics. This callback is not a user impression or proof that the image was visible. Do not send experiment exposure events from this callback. App layout, accessibility labels, image sizing, and refresh policy remain app-owned. Rendering uses `expo-image` for downloaded PNG/WebP support on iOS and Android; props follow Expo Image except `cachePolicy`, which controls Assetlib's verified byte retention. The renderer's independent cache is always disabled. Pending resolution is cancelled when a component unmounts or changes its asset request.
 
 ## Appearance variants
 
@@ -55,6 +55,33 @@ Declare `"variants": { "appearance": ["dark"] }` on a checked-in catalog placeme
 Published placements resolve the requested appearance cell when bound, or inherit the placement's Any image. Stateful placements select one complete appearance family; individual states never borrow across appearances. `fallbackDark` is optional on image and dynamic-image components. State images accept an optional `fallbacksDark` map containing every declared state. Dark mode uses that complete bundle when supplied; otherwise it uses the existing `fallback` or `fallbacks`. Bundled accessibility metadata remains app-owned: provide descriptions suitable for the displayed fallback.
 
 Dynamic collection payloads have no appearance cells, so their verified image stays the same while their bundled placeholder can follow appearance. Animations continue using the Any cell. Appearance-scoped cache keys isolate light, dark, and no-preference image requests, including historical cache fallback.
+
+## Arms and app decisions
+
+Declare `"variants": { "arm": ["b", "c"], "appearance": ["dark"] }` on a catalog placement to enable arms alongside appearance. Arms contain 1–4 unique lowercase names matching `^[a-z][a-z0-9_-]{0,19}$`; `control`, `any`, `constructor`, `prototype`, and `__proto__` are reserved. Control remains the placement's existing image.
+
+`AssetlibImage` and `AssetlibStateImage` accept an optional `arm="b"` prop. An explicit arm bypasses the decision callback; `arm="control"` selects control. Changing the prop cancels the previous request and resolves again. Without an explicit arm, the client may ask the app's experiment tool for the assignment:
+
+```tsx
+const client = createExpoAssetClient(parsePublicConfig(publicConfig), {
+  decide: async ({ key, arms, appearance }) => {
+    // Read an assignment from app-owned state; do not record exposure here.
+    return assignments[key];
+  },
+});
+
+<AssetlibImage
+  client={client}
+  asset={AppAssets.Travel.coast}
+  arm="b"
+  appearance="dark"
+  fallback={require('./assets/coast.png')}
+/>
+```
+
+The callback receives the placement key, declared arms, and requested appearance. It runs once per resolution, including once for a complete state family, and never for placements without arms. An undefined, undeclared, or throwing decision falls back to control with `armSource: 'invalid-decision'` and a reason in the status message. With no callback, control is used. If the app's assignment changes, update `arm` or increment `revision` to request it again. **Exposure must be logged by the app's experiment tool when its own visibility rules are met, never by `decide` or `onStatus`.**
+
+Resolution checks `(arm, appearance)`, `(arm, Any)`, `(control, appearance)`, then `(control, Any)`. It never borrows another arm's artwork or mixes state families. Status `arm` identifies the actual selected artwork: inheriting control or displaying a bundled fallback reports `null`, even when the request came from an explicit arm or decision. Image caches isolate both requested arm and appearance, including historical fallback. Dynamic collections and animations do not use arm cells. Bundled fallbacks remain control artwork; there are no per-arm bundled props.
 
 ## Accessibility per usage
 
@@ -106,7 +133,7 @@ const garden = {
 />
 ```
 
-The component prepares the complete verified family before showing it. Changing only `state` selects from the pinned family without downloading again. A changed client, state-set contract, `revision`, pixel target, cache policy, or effective appearance starts a new resolution. If preparing or displaying a member fails, the entire family uses its matching bundled states until the next resolution. It never substitutes another growth state for a missing one. App code is responsible for supplying a valid declared state.
+The component prepares the complete verified family before showing it. Changing only `state` selects from the pinned family without downloading again. A changed client, state-set contract, `revision`, pixel target, cache policy, arm, or effective appearance starts a new resolution. If preparing or displaying a member fails, the entire family uses its matching bundled states until the next resolution. It never substitutes another growth state for a missing one. App code is responsible for supplying a valid declared state.
 
 ## Dynamic collections and retention
 

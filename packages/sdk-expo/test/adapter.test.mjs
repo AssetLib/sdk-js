@@ -69,7 +69,7 @@ const native = await import(pathToFileURL(path.join(temporary, 'platform.native.
 const { Image } = await import(pathToFileURL(path.join(temporary, 'image.mjs')));
 const { setColorScheme } = await import(pathToFileURL(path.join(temporary, 'react-native.mjs')));
 const { rasterDataUri } = await import(pathToFileURL(path.join(temporary, 'shared.mjs')));
-const resolved = (name = 'a', cachePolicy = 'none') => ({ source: 'remote', sequence: 7, message: 'verified', sha256: name.repeat(64), assetId: name, mime: 'image/png', bytes: new Uint8Array([1, 2, 3]), cachePolicy });
+const resolved = (name = 'a', cachePolicy = 'none') => ({ source: 'remote', sequence: 7, message: 'verified', arm: null, armSource: 'control', sha256: name.repeat(64), assetId: name, mime: 'image/png', bytes: new Uint8Array([1, 2, 3]), cachePolicy });
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 function harness() {
   const released = [];
@@ -115,6 +115,12 @@ test('factory preserves durable storage while forwarding image retention policy'
   const client = adapter.createExpoAssetClient(config, { cachePolicy: 'none' });
   assert.equal(client.options.cachePolicy, 'none');
   assert.equal(client.options.storage.persistentConfig, config);
+});
+
+test('factory forwards the app decision callback unchanged', () => {
+  const decide = async ({ arms }) => arms[0];
+  const client = adapter.createExpoAssetClient(config, { decide });
+  assert.equal(client.options.decide, decide);
 });
 
 test('state changes select a pinned complete family without refetching or mixing fallbacks', async () => {
@@ -396,3 +402,79 @@ test('a supplied dark bundle must cover every state instead of borrowing from th
     });
   }, /Every artwork state requires its own dark bundled fallback/);
 });
+
+for (const [component, method, initialProps, finish] of [
+  ['AssetlibImage', 'resolve', { asset: { key: 'travel.coast', width: 120, height: 120 }, fallback: 1 }, (name, arm, armSource) => ({ ...resolved(name), arm, armSource })],
+  ['AssetlibStateImage', 'resolveStateSet', { asset: group, state: 'sprout', fallbacks }, (name, arm, armSource) => ({ source: 'remote', sequence: 7, message: 'complete', arm, armSource, states: { sprout: { ...resolved(name), arm, armSource }, grown: { ...resolved(`${name}2`), arm, armSource } } })],
+]) {
+  test(`${component} re-resolves on arm changes, discards stale results and reports the rendered arm`, async () => {
+    const { released } = harness(), calls = [], statuses = [];
+    const client = { config, [method]: (_asset, options) => {
+      const pending = deferred(); calls.push({ options, ...pending }); return pending.promise;
+    } };
+    const props = { ...initialProps, client, appearance: 'dark', onStatus: status => statuses.push(status) };
+    let view;
+    await act(async () => { view = create(React.createElement(adapter[component], props)); });
+    assert.equal(calls[0].options.arm, undefined);
+    assert.equal(calls[0].options.appearance, 'dark');
+    assert.equal(statuses.at(-1).arm, null);
+    assert.equal(statuses.at(-1).armSource, 'control');
+    await act(async () => { calls[0].resolve(finish('a', 'b', 'decision')); });
+    assert.deepEqual(view.root.findByType(Image).props.source, { uri: 'verified:a' });
+    assert.equal(statuses.at(-1).arm, 'b');
+    assert.equal(statuses.at(-1).armSource, 'decision');
+
+    await act(async () => { view.update(React.createElement(adapter[component], { ...props, arm: 'c' })); });
+    assert.equal(calls[0].options.signal.aborted, true);
+    assert.equal(calls[1].options.arm, 'c');
+    assert.equal(view.root.findByType(Image).props.source, 1);
+    assert.equal(view.root.findByType(Image).props.arm, undefined, 'arm is consumed by the adapter');
+    assert.ok(released.includes('a'));
+    assert.equal(statuses.at(-1).arm, null);
+    assert.equal(statuses.at(-1).armSource, 'control');
+    await act(async () => { view.update(React.createElement(adapter[component], { ...props, arm: 'b' })); });
+    assert.equal(calls[1].options.signal.aborted, true);
+    assert.equal(calls[2].options.arm, 'b');
+    const countBeforeStale = statuses.length;
+    await act(async () => { calls[1].resolve(finish('c', 'c', 'explicit')); });
+    assert.equal(statuses.length, countBeforeStale);
+    assert.equal(view.root.findByType(Image).props.source, 1);
+    await act(async () => { calls[2].resolve(finish('b', 'b', 'explicit')); });
+    assert.deepEqual(view.root.findByType(Image).props.source, { uri: 'verified:b' });
+    assert.equal(statuses.at(-1).arm, 'b');
+    assert.equal(statuses.at(-1).armSource, 'explicit');
+
+    if (component === 'AssetlibStateImage') {
+      await act(async () => { view.update(React.createElement(adapter[component], { ...props, state: 'grown', arm: 'b' })); });
+      assert.deepEqual(view.root.findByType(Image).props.source, { uri: 'verified:b2' });
+      assert.equal(calls.length, 3, 'state changes keep the selected arm family pinned');
+    }
+    await act(async () => { view.root.findByType(Image).props.onError({ error: 'decode' }); });
+    assert.equal(statuses.at(-1).source, 'bundle');
+    assert.equal(statuses.at(-1).arm, null);
+    assert.equal(statuses.at(-1).armSource, 'control');
+    await act(async () => { view.unmount(); });
+    assert.equal(calls[2].options.signal.aborted, true);
+  });
+
+  test(`${component} preserves invalid-decision diagnostics for control and bundled results`, async () => {
+    harness();
+    const statuses = [];
+    let result = { ...finish('a', null, 'invalid-decision'), message: 'Decision returned an undeclared arm; using control.' };
+    const client = { config, [method]: async () => result };
+    const props = { ...initialProps, client, onStatus: status => statuses.push(status) };
+    let view;
+    await act(async () => { view = create(React.createElement(adapter[component], props)); });
+    assert.equal(statuses.at(-1).arm, null);
+    assert.equal(statuses.at(-1).armSource, 'invalid-decision');
+    assert.equal(statuses.at(-1).message, result.message);
+    result = { source: 'bundle', sequence: null, arm: null, armSource: 'invalid-decision', message: 'Decision failed; using bundled artwork.', states: {} };
+    await act(async () => { view.update(React.createElement(adapter[component], { ...props, revision: 1 })); });
+    assert.equal(view.root.findByType(Image).props.source, 1);
+    assert.equal(statuses.at(-1).source, 'bundle');
+    assert.equal(statuses.at(-1).arm, null);
+    assert.equal(statuses.at(-1).armSource, 'invalid-decision');
+    assert.equal(statuses.at(-1).message, result.message);
+    await act(async () => { view.unmount(); });
+  });
+}

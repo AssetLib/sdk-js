@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { open } from 'node:fs/promises';
+import ts from 'typescript';
 import { generateCatalog } from './codegen.mjs';
 
 const MAX_CATALOG_BYTES = 128 * 1024;
@@ -25,6 +26,24 @@ export function canonicalize(value) {
 
 export function catalogHash(catalog) {
   return createHash('sha256').update(canonicalize(catalog), 'utf8').digest('hex');
+}
+
+/** Preserve compact placement lines and their indentation; otherwise use expanded JSON. */
+export function formatCatalog(catalog, original) {
+  const source = ts.parseJsonText('assetlib.catalog.json', original);
+  const object = source.statements[0]?.expression;
+  const placements = object && ts.isObjectLiteralExpression(object)
+    ? object.properties.findLast(property => property.name?.text === 'placements')?.initializer : undefined;
+  if (!placements || !ts.isArrayLiteralExpression(placements) || !placements.elements.length || placements.elements.some(element => /[\r\n]/.test(original.slice(element.getStart(source), element.end)))) return JSON.stringify(catalog, null, 2) + '\n';
+  const last = placements.elements.at(-1), start = last.getStart(source);
+  const linePrefix = original.slice(original.lastIndexOf('\n', start - 1) + 1, start);
+  const newline = original.includes('\r\n') ? '\r\n' : '\n';
+  const separator = /^[\t ]*$/.test(linePrefix) ? newline + linePrefix : '';
+  const compact = value => Array.isArray(value) ? '[' + value.map(compact).join(', ') + ']'
+    : value !== null && typeof value === 'object' ? '{ ' + Object.entries(value).map(([key, item]) => JSON.stringify(key) + ': ' + compact(item)).join(', ') + ' }'
+      : JSON.stringify(value);
+  const appended = catalog.placements.slice(placements.elements.length).map(placement => ',' + separator + (separator ? compact(placement) : JSON.stringify(placement))).join('');
+  return original.slice(0, last.end) + appended + original.slice(last.end);
 }
 
 export async function readCatalog(file) {

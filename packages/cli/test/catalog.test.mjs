@@ -5,7 +5,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { canonicalize, catalogHash, readCatalog } from '../src/catalog.mjs';
+import { canonicalize, catalogHash, formatCatalog, readCatalog } from '../src/catalog.mjs';
 import { generateCatalog } from '../src/codegen.mjs';
 
 const input = { schemaVersion: 1, placements: [
@@ -26,6 +26,15 @@ test('canonicalization sorts numeric and Unicode keys by code point and preserve
   assert.notEqual(catalogHash([1, 2]), catalogHash([2, 1]));
 });
 
+test('compact formatting also preserves a minified catalog and expands a mixed catalog', () => {
+  const single = { ...input, placements: [input.placements[0]] };
+  const minified = JSON.stringify(single);
+  assert.equal(formatCatalog(input, minified), JSON.stringify(input));
+  assert.equal(formatCatalog(single, minified), minified);
+  const mixed = '{\n    "schemaVersion": 1,\n    "placements": [\n        ' + JSON.stringify(input.placements[0]) + ',\n' + JSON.stringify(input.placements[1], null, 4).split('\n').map(line => '        ' + line).join('\n') + '\n    ]\n}\n';
+  assert.equal(formatCatalog(input, mixed), JSON.stringify(input, null, 2) + '\n');
+});
+
 async function fixture(t) {
   const dir = await mkdtemp(path.join(tmpdir(), 'assetlib-catalog-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
@@ -37,14 +46,14 @@ test('standalone generation is byte-identical to the existing core codegen', asy
   const catalog = structuredClone(input);
   catalog.placements[0].bundledAccessibility = { defaultLocale: 'en', descriptions: { en: 'Coast', th: 'ชายฝั่ง' } };
   catalog.placements[1].bundledStateAccessibility = { empty: { defaultLocale: 'en', descriptions: { en: 'Empty garden' } } };
-  catalog.placements[0].variants = { appearance: ['dark'] };
-  catalog.placements[1].variants = { appearance: ['light', 'dark'] };
+  catalog.placements[0].variants = { appearance: ['dark'], arm: ['b', 'c'] };
+  catalog.placements[1].variants = { arm: ['b', 'new_art', 'treatment-2', 'a'.repeat(20)] };
   await writeFile(file, JSON.stringify(catalog));
   const existing = fileURLToPath(new URL('../../sdk-core/bin/codegen.mjs', import.meta.url));
   assert.equal(generateCatalog(await readCatalog(file)), execFileSync(process.execPath, [existing, file], { encoding: 'utf8' }));
   const generated = JSON.parse(generateCatalog(catalog).split('export const AppAssets = ')[1].split(' as const;')[0]);
-  assert.deepEqual(generated.Travel.coast.variants, { appearance: ['dark'] });
-  assert.deepEqual(generated.Tasks.garden.variants, { appearance: ['light', 'dark'] });
+  assert.deepEqual(generated.Travel.coast.variants, catalog.placements[0].variants);
+  assert.deepEqual(generated.Tasks.garden.variants, catalog.placements[1].variants);
 });
 
 test('both codegens reject unknown axes, values and malformed appearance declarations', async t => {
@@ -59,6 +68,24 @@ test('both codegens reject unknown axes, values and malformed appearance declara
     const result = spawnSync(process.execPath, [existing, file], { encoding: 'utf8' });
     assert.equal(result.status, 1);
     assert.match(result.stderr, /Variants/);
+  }
+});
+
+test('both codegens reject malformed, reserved and duplicate arm declarations', async t => {
+  const file = await fixture(t);
+  const existing = fileURLToPath(new URL('../../sdk-core/bin/codegen.mjs', import.meta.url));
+  const invalid = [null, [], 'b', ['b', 'b'], ['b', 'c', 'd', 'e', 'f'], [1], [''], ['B'], ['1b'], ['b.c'], ['b c'], ['b\n'], ['a'.repeat(21)], ...['control', 'any', 'constructor', 'prototype', '__proto__'].map(value => [value])];
+  for (const arm of invalid) {
+    for (const variants of [{ arm }, { appearance: ['dark'], arm }]) {
+      const catalog = structuredClone(input);
+      catalog.placements[0].variants = variants;
+      await writeFile(file, JSON.stringify(catalog));
+      assert.throws(() => generateCatalog(catalog), /Variants/);
+      await assert.rejects(readCatalog(file), /Variants/);
+      const result = spawnSync(process.execPath, [existing, file], { encoding: 'utf8' });
+      assert.equal(result.status, 1, JSON.stringify(variants));
+      assert.match(result.stderr, /Variants/);
+    }
   }
 });
 
