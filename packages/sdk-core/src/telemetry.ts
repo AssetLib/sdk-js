@@ -28,7 +28,7 @@ export class ObservationReporter {
   constructor(config: AssetlibConfig, private storage: AssetStorage, private fetcher: typeof fetch, options: TelemetryOptions) {
     this.interval = boundedInteger(options.flushIntervalMs, 60_000, 2_147_483_647);
     this.maxBatch = boundedInteger(options.maxBatch, 200, 200);
-    const sdk = options.sdk ?? { name: 'sdk-core', version: '0.4.0-preview.1' };
+    const sdk = options.sdk ?? { name: 'sdk-core', version: '0.4.1-preview.1' };
     const build = options.build ?? { platform: 'web', appVersion: 'unknown', buildNumber: 'unknown' };
     if (!version(sdk.name) || !version(sdk.version) || !['ios', 'android', 'web', 'expo'].includes(build.platform) || !version(build.appVersion) || !version(build.buildNumber) || (options.installId !== undefined && !validId(options.installId))) throw new Error('Invalid observation configuration.');
     // Copy only the contract fields, never arbitrary caller-supplied metadata.

@@ -15,7 +15,7 @@ import { assetIdPattern, catalogForSequence, validateAssetPage, validateDelivery
 import { validateAccessibility } from './accessibility.js';
 export { resolveAccessibilityDescription, validateAccessibility } from './accessibility.js';
 
-export const SDK_LIMITS = Object.freeze({ manifestBytes: 256 * 1024, assetBytes: 8 * 1024 * 1024, slots: 100, retainedReleases: 8, stateBytes: 3 * 1024 * 1024, cacheBytes: 50 * 1024 * 1024, cacheEntries: 100 });
+export const SDK_LIMITS = Object.freeze({ configBytes: 4096, pinnedKeys: 16, publicKeyBytes: 256, manifestBytes: 256 * 1024, assetBytes: 8 * 1024 * 1024, slots: 100, retainedReleases: 8, stateBytes: 3 * 1024 * 1024, cacheBytes: 50 * 1024 * 1024, cacheEntries: 100 });
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const hashPattern = /^[a-f0-9]{64}$/;
 const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
@@ -33,6 +33,14 @@ function publicKeyBytes(pem: string): Uint8Array {
 }
 
 export function parsePublicConfig(input: unknown, options: { allowInsecureLoopback?: boolean } = {}): AssetlibConfig {
+  let serialized: string | undefined;
+  try { serialized = typeof input === 'string' ? input : JSON.stringify(input); }
+  catch { return fail('Invalid Assetlib public configuration JSON.'); }
+  if (serialized === undefined) return fail('Invalid Assetlib public configuration JSON.');
+  if (utf8ToBytes(serialized).length > SDK_LIMITS.configBytes) return fail('Assetlib public configuration exceeds 4096 UTF-8 bytes.');
+  // Validate the same JSON whose size was measured, including for object input.
+  try { input = JSON.parse(serialized); }
+  catch { return fail('Invalid Assetlib public configuration JSON.'); }
   if (!record(input) || input.schemaVersion !== 1 || (input.environment !== 'staging' && input.environment !== 'production') || typeof input.orgId !== 'string' || !uuid.test(input.orgId) || typeof input.appId !== 'string' || !uuid.test(input.appId) || typeof input.manifestUrl !== 'string') return fail('Invalid Assetlib public configuration.');
   const url = new URL(input.manifestUrl);
   const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
@@ -42,25 +50,32 @@ export function parsePublicConfig(input: unknown, options: { allowInsecureLoopba
   const legacyProductionPath = input.environment === 'production' && url.pathname === `${deliveryPath}/manifest`;
   if (url.username || url.password || url.search || url.hash || (url.pathname !== environmentPath && !legacyProductionPath)) return fail('Manifest URL does not match this app.');
   const pinnedPublicKey = input.pinnedPublicKey;
-  if (pinnedPublicKey !== undefined && (typeof pinnedPublicKey !== 'string' || pinnedPublicKey.length > 256)) return fail('Invalid Assetlib public configuration.');
-  if (input.pinnedPublicKeys !== undefined && (!Array.isArray(input.pinnedPublicKeys) || input.pinnedPublicKeys.length === 0)) return fail('Expected a nonempty pinned public key set.');
+  if (pinnedPublicKey !== undefined && (typeof pinnedPublicKey !== 'string' || utf8ToBytes(pinnedPublicKey).length > SDK_LIMITS.publicKeyBytes)) return fail('Invalid Assetlib public configuration.');
+  if (input.pinnedPublicKeys !== undefined && (!Array.isArray(input.pinnedPublicKeys) || input.pinnedPublicKeys.length === 0 || input.pinnedPublicKeys.length > SDK_LIMITS.pinnedKeys)) return fail('Expected 1–16 distinct pinned public keys.');
   const pinnedPublicKeys: string[] = [];
   for (const key of input.pinnedPublicKeys ?? (pinnedPublicKey === undefined ? [] : [pinnedPublicKey])) {
-    if (typeof key !== 'string' || key.length > 256) return fail('Invalid pinned public key.');
+    if (typeof key !== 'string' || utf8ToBytes(key).length > SDK_LIMITS.publicKeyBytes) return fail('Invalid pinned public key.');
+    if (pinnedPublicKeys.includes(key)) return fail('Pinned public keys must be distinct exact PEM strings.');
     publicKeyBytes(key);
     pinnedPublicKeys.push(key);
   }
   if (!pinnedPublicKeys.length) return fail('A pinned public key or key set is required.');
   if (pinnedPublicKey !== undefined && !pinnedPublicKeys.includes(pinnedPublicKey)) return fail('The single pinned public key must be in the pinned key set.');
   const keyId = pinnedPublicKey === undefined ? undefined : hashBytes(utf8ToBytes(pinnedPublicKey)).slice(0, 16);
-  if (input.keyId !== undefined && input.keyId !== keyId) return fail('Signing key ID does not match the pinned key.');
+  if (input.keyId !== undefined && (pinnedPublicKey === undefined || input.keyId !== keyId)) return fail('Signing key ID requires and must match an explicit single pinned key.');
   const keyIds = pinnedPublicKeys.map(key => hashBytes(utf8ToBytes(key)).slice(0, 16));
   if (input.keyIds !== undefined && (!Array.isArray(input.keyIds) || input.keyIds.length !== keyIds.length || keyIds.some((id, index) => id !== (input.keyIds as unknown[])[index]))) return fail('Signing key IDs do not match the pinned key set.');
-  return { schemaVersion: 1, orgId: input.orgId, appId: input.appId, environment: input.environment, manifestUrl: url.href,
+  const config: AssetlibConfig = { schemaVersion: 1, orgId: input.orgId, appId: input.appId, environment: input.environment, manifestUrl: url.href,
     ...(pinnedPublicKey !== undefined ? { pinnedPublicKey, keyId } : {}),
     ...(input.pinnedPublicKeys !== undefined ? { pinnedPublicKeys } : {}),
     ...(input.pinnedPublicKeys !== undefined || input.keyIds !== undefined ? { keyIds } : {}),
   };
+  // Derived IDs are optional metadata. Do not let adding them make a valid
+  // configuration too large to pass to a client or parse again.
+  for (const field of ['keyIds', 'keyId'] as const) {
+    if (input[field] === undefined && utf8ToBytes(JSON.stringify(config)).length > SDK_LIMITS.configBytes) delete config[field];
+  }
+  return config;
 }
 
 function verifyEnvelope(input: unknown, config: AssetlibConfig): { envelope: SignedManifest; payload: unknown } {

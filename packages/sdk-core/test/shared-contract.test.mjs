@@ -17,6 +17,7 @@ const config = parsePublicConfig(await json(cases.config));
 const configs = Object.fromEntries(await Promise.all(Object.entries(cases.configs).map(async ([name, file]) => [name, parsePublicConfig(await json(file))])));
 assert.deepEqual(configs.production, config);
 assert.ok(Array.isArray(cases.resolution) && cases.resolution.length > 0, 'The corpus must include resolution checks.');
+assert.ok(Array.isArray(cases.publicConfigs) && cases.publicConfigs.length > 0, 'The corpus must include public config checks.');
 const assets = await json(cases.assets);
 const catalog = await json(cases.catalog);
 const ref = catalog.placements[0];
@@ -89,7 +90,58 @@ test('every manifest fixture is indexed by a case', async () => {
   assert.deepEqual(files.filter(file => !indexed.has(file)), []);
 });
 test('published JS limits equal the documented native preview contract', () => {
-  assert.deepEqual(SDK_LIMITS, { manifestBytes: 262144, assetBytes: 8388608, slots: 100, retainedReleases: 8, stateBytes: 3145728, cacheBytes: 52428800, cacheEntries: 100 });
+  assert.deepEqual(SDK_LIMITS, { configBytes: 4096, pinnedKeys: 16, publicKeyBytes: 256, manifestBytes: 262144, assetBytes: 8388608, slots: 100, retainedReleases: 8, stateBytes: 3145728, cacheBytes: 52428800, cacheEntries: 100 });
+});
+for (const item of cases.publicConfigs) {
+  for (const mode of ['string', 'object']) test(`shared public config ${item.parsing} (${mode}): ${item.file}`, async () => {
+    const raw = (await bytes(item.file)).toString('utf8');
+    assert.equal(Buffer.byteLength(raw, 'utf8'), item.utf8Bytes, 'Indexed UTF-8 size');
+    const input = mode === 'string' ? raw : JSON.parse(raw);
+    assert.ok(['accept', 'reject'].includes(item.parsing));
+    if (item.parsing === 'reject') return assert.throws(() => parsePublicConfig(input));
+    const parsed = parsePublicConfig(input);
+    const source = JSON.parse(raw);
+    const pins = source.pinnedPublicKeys ?? [source.pinnedPublicKey];
+    assert.deepEqual(parsed.pinnedPublicKeys ?? [parsed.pinnedPublicKey], pins);
+    if (parsed.keyIds !== undefined) assert.deepEqual(parsed.keyIds, pins.map(pin => sha256(pin).slice(0, 16)));
+    if (parsed.keyId !== undefined) assert.equal(parsed.keyId, sha256(parsed.pinnedPublicKey).slice(0, 16));
+    assert.ok(Buffer.byteLength(JSON.stringify(parsed), 'utf8') <= 4096);
+    assert.deepEqual(parsePublicConfig(parsed), parsed);
+    assert.deepEqual(new AssetClient(parsed, { storage: createMemoryStorage() }).config, parsed);
+    for (const expected of item.envelopes ?? []) {
+      const signed = await json(expected.file);
+      // Untrusted signatures are valid cryptographically; membership grants trust.
+      // Decode the DER independently: OpenSSL's PEM reader rejects blank body lines.
+      const der = Buffer.from(signed.publicKey.replace('-----BEGIN PUBLIC KEY-----', '').replace('-----END PUBLIC KEY-----', '').replace(/\s/g, ''), 'base64');
+      assert.equal(verify(null, Buffer.from(signed.payload, 'utf8'), createPublicKey({ key: der, format: 'der', type: 'spki' }), Buffer.from(signed.signature, 'base64')), true);
+      if (expected.verification === 'reject') assert.throws(() => verifySignedManifest(signed, parsed), expected.file);
+      else assert.equal(verifySignedManifest(signed, parsed).payload.sequence, 1, expected.file);
+    }
+  });
+}
+test('raw config whitespace counts toward its limit while object input uses its own JSON serialization', async () => {
+  const raw = (await bytes('public-config/exactly-4096-bytes.json')).toString('utf8');
+  assert.doesNotThrow(() => parsePublicConfig(raw));
+  assert.throws(() => parsePublicConfig(`${raw}\n`), /4096/);
+  assert.doesNotThrow(() => parsePublicConfig(JSON.parse(`${raw}\n`)));
+});
+test('config inputs must have a valid JSON representation', () => {
+  const circular = { ...config }; circular.unknown = circular;
+  for (const input of [undefined, null, [], 1, true, '{broken', 'null', '[]', circular, { ...config, unknown: 1n }]) {
+    assert.throws(() => parsePublicConfig(input));
+  }
+  assert.throws(() => parsePublicConfig({ ...config, toJSON() { return {}; } }));
+});
+test('derived IDs cannot make an accepted near-limit configuration unusable by the client', async () => {
+  const input = await json('public-config/sixteen-keys.json');
+  const pins = input.pinnedPublicKeys.map(pin => pin.replace('-----END PUBLIC KEY-----', `${'\n'.repeat(57)}-----END PUBLIC KEY-----`));
+  const raw = JSON.stringify({ ...input, pinnedPublicKeys: pins, keyIds: undefined });
+  assert.ok(Buffer.byteLength(raw) <= 4096);
+  const parsed = parsePublicConfig(raw);
+  assert.deepEqual(parsed.pinnedPublicKeys, pins);
+  assert.ok(Buffer.byteLength(JSON.stringify(parsed)) <= 4096);
+  assert.deepEqual(parsePublicConfig(parsed), parsed);
+  assert.deepEqual(new AssetClient(parsed, { storage: createMemoryStorage() }).config, parsed);
 });
 for (const item of cases.manifests) {
   test(`shared manifest ${item.verification}: ${item.file}`, async () => {
