@@ -1,21 +1,21 @@
 import { SDK_LIMITS, type AssetlibConfig, type AssetStorage, type ResolvedAsset } from '@assetlib/sdk-core';
-import { namespace, validateCacheKey, type ImageUri } from './shared';
+import { namespace, installStorageKey, validateCacheKey, type ImageUri } from './shared';
 export const vectorRenderingSupported = true;
 export const platformFetch: typeof globalThis.fetch = (...args) => globalThis.fetch(...args);
 
-function database(config: AssetlibConfig): Promise<IDBDatabase> {
+function database(config: AssetlibConfig, install = false): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     if (!globalThis.indexedDB) return reject(new Error('IndexedDB is required for persistent release verification.'));
-    const request = indexedDB.open(`assetlib-v1-${namespace(config)}`, 1);
-    request.onupgradeneeded = () => { request.result.createObjectStore('meta'); request.result.createObjectStore('images', { keyPath: 'hash' }); };
+    const request = indexedDB.open(install ? 'assetlib-installs-v1' : `assetlib-v1-${namespace(config)}`, 1);
+    request.onupgradeneeded = () => { request.result.createObjectStore('meta'); if (!install) request.result.createObjectStore('images', { keyPath: 'hash' }); };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(new Error('Could not open the Assetlib cache.'));
     request.onblocked = () => reject(new Error('Close other Assetlib tabs to update this cache.'));
   });
 }
 export function createPlatformStorage(config: AssetlibConfig): AssetStorage {
-  async function transaction<T>(storeName: 'meta' | 'images', mode: IDBTransactionMode, work: (store: IDBObjectStore, done: (result: T) => void, abort: (error: Error) => void) => void): Promise<T> {
-    const db = await database(config);
+  async function transaction<T>(storeName: 'meta' | 'images', mode: IDBTransactionMode, work: (store: IDBObjectStore, done: (result: T) => void, abort: (error: Error) => void) => void, install = false): Promise<T> {
+    const db = await database(config, install);
     return new Promise<T>((resolve, reject) => {
       const tx = db.transaction(storeName, mode);
       let result: T;
@@ -27,6 +27,18 @@ export function createPlatformStorage(config: AssetlibConfig): AssetStorage {
     });
   }
   return {
+    getOrCreateInstallId: (key, create) => transaction('meta', 'readwrite', (store, done, abort) => {
+      const storedKey = installStorageKey(key);
+      const request = store.get(storedKey);
+      request.onsuccess = () => {
+        try {
+          if (typeof request.result === 'string' && /^[a-f0-9]{32}$/.test(request.result)) return done(request.result);
+          const value = create();
+          if (!/^[a-f0-9]{32}$/.test(value)) return abort(new Error('Invalid random install ID.'));
+          store.put(value, storedKey); done(value);
+        } catch { abort(new Error('Could not persist the random install ID.')); }
+      };
+    }, true),
     loadState: () => transaction('meta', 'readonly', (store, done) => { const request = store.get('state'); request.onsuccess = () => done(request.result ?? null); }),
     saveState: value => transaction('meta', 'readwrite', (store, done, abort) => {
       if (new TextEncoder().encode(value).length > SDK_LIMITS.stateBytes) return abort(new Error('State exceeds its bound.'));

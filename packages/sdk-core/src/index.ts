@@ -2,7 +2,8 @@ import { ed25519 } from '@noble/curves/ed25519.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 import { base64 } from '@scure/base';
-import type { AssetlibConfig, AssetMime, AssetRef, AssetPage, AssetPageOptions, AssetPagePayload, ArmSource, CachePolicy, StorageMime, CatalogAsset, DynamicAssetRef, StateSetRef, ResolvedStateSet, ManifestSlot, ClientOptions, ClientStatus, ManifestPayload, RefreshResult, ResolvedAsset, ResolvedAnimation, ResolveOptions, SignedManifest } from './types.js';
+import type { AssetlibConfig, AssetMime, AssetRef, AssetStatus, AssetPage, AssetPageOptions, AssetPagePayload, ArmSource, CachePolicy, StorageMime, CatalogAsset, DynamicAssetRef, FallbackReason, StateSetRef, ResolvedStateSet, ManifestSlot, ClientOptions, ClientStatus, ManifestPayload, RefreshResult, ResolvedAsset, ResolvedAnimation, ResolveOptions, SignedManifest } from './types.js';
+import { ObservationReporter } from './telemetry.js';
 export type * from './types.js';
 import { selectAssetCandidates, supportedFormats, targetPixels, validRenditionHeader, validateRenditions, type AssetCandidate } from './renditions.js';
 export { selectAssetCandidates } from './renditions.js';
@@ -80,29 +81,36 @@ const cachePolicy = (policy: unknown): CachePolicy => { if (policy !== 'disk' &&
 const validateAppearance = (appearance: unknown): void => { if (appearance !== undefined && appearance !== 'light' && appearance !== 'dark') throw new Error('Unknown artwork appearance.'); };
 const validateArm = (arm: unknown): void => { if (arm !== undefined && typeof arm !== 'string') throw new Error('Artwork arm must be a string.'); };
 
-function variantSlot(slot: ManifestSlot, arm: string | undefined, appearance: ResolveOptions['appearance']): { slot: ManifestSlot; arm: string | null } {
+function variantSlot(slot: ManifestSlot, arm: string | undefined, appearance: ResolveOptions['appearance']): { slot: ManifestSlot; arm: string | null; appearance?: ResolveOptions['appearance'] } {
   const find = (selectedArm: string | undefined, selectedAppearance: ResolveOptions['appearance']) => slot.cells?.find(value => value.arm === selectedArm && value.appearance === selectedAppearance);
   const cell = (arm !== undefined ? find(arm, appearance) ?? find(arm, undefined) : undefined)
     ?? (appearance !== undefined ? find(undefined, appearance) : undefined);
   // Project a fresh descriptor so optional metadata never leaks from Control/Any.
-  return cell ? { slot: { ...cell, key: slot.key, screen: slot.screen, width: slot.width, height: slot.height }, arm: cell.arm ?? null } : { slot, arm: null };
+  return cell ? { slot: { ...cell, key: slot.key, screen: slot.screen, width: slot.width, height: slot.height }, arm: cell.arm ?? null, ...(cell.appearance ? { appearance: cell.appearance } : {}) } : { slot, arm: null };
 }
 
 type ArmDecision = { arm?: string; armSource: ArmSource; reason?: string };
 const decisionMessage = (message: string, decision: ArmDecision): string => decision.reason ? `${message} ${decision.reason}` : message;
 
+class DeliveryError extends Error {
+  constructor(message: string, readonly reason: FallbackReason) { super(message); }
+}
+const failureReason = (error: unknown): FallbackReason => error instanceof DeliveryError ? error.reason : 'other';
+
 async function fetchBounded(fetcher: typeof fetch, url: string, maxBytes: number, timeoutMs: number, accept = 'image/webp', signal?: AbortSignal, noStore = false): Promise<Uint8Array> {
   throwIfAborted(signal);
   const controller = new AbortController();
   let timeout: ReturnType<typeof setTimeout> | undefined;
-  const deadline = new Promise<never>((_, reject) => { timeout = setTimeout(() => { controller.abort(); reject(new Error('Assetlib request timed out.')); }, timeoutMs); });
+  const deadline = new Promise<never>((_, reject) => { timeout = setTimeout(() => { controller.abort(); reject(new DeliveryError('Assetlib request timed out.', 'offline')); }, timeoutMs); });
   let abort: (() => void) | undefined;
   const cancelled = new Promise<never>((_, reject) => { abort = () => { controller.abort(); reject(new Error('Assetlib request cancelled.')); }; signal?.addEventListener('abort', abort, { once: true }); });
   const request = async () => {
-    const response = await fetcher(url, { method: 'GET', credentials: 'omit', redirect: 'error', ...(noStore ? { cache: 'no-store' as const } : {}), signal: controller.signal, headers: { Accept: url.endsWith('/manifest') ? 'application/json' : accept } });
-    if (!response.ok || response.redirected) throw new Error(`Assetlib delivery returned ${response.status}.`);
+    let response: Response;
+    try { response = await fetcher(url, { method: 'GET', credentials: 'omit', redirect: 'error', ...(noStore ? { cache: 'no-store' as const } : {}), signal: controller.signal, headers: { Accept: url.endsWith('/manifest') ? 'application/json' : accept } }); }
+    catch (error) { throw new DeliveryError(error instanceof Error ? error.message : 'Assetlib delivery is unavailable.', 'offline'); }
+    if (!response.ok || response.redirected) throw new DeliveryError(`Assetlib delivery returned ${response.status}.`, response.redirected ? 'verification' : response.status === 404 ? 'missing' : 'other');
     const declared = response.headers.get('content-length');
-    if (declared && (!/^\d+$/.test(declared) || Number(declared) > maxBytes)) throw new Error('Response exceeds the SDK byte limit.');
+    if (declared && (!/^\d+$/.test(declared) || Number(declared) > maxBytes)) throw new DeliveryError('Response exceeds the SDK byte limit.', 'verification');
     if (!response.body?.getReader) throw new Error('This fetch implementation does not support bounded streaming; use expo/fetch.');
     const reader = response.body.getReader();
     const chunks: Uint8Array[] = [];
@@ -110,13 +118,14 @@ async function fetchBounded(fetcher: typeof fetch, url: string, maxBytes: number
     try {
       while (true) {
         const next = await reader.read();
-        if (controller.signal.aborted) throw new Error('Assetlib request timed out.');
+        if (controller.signal.aborted) throw new DeliveryError('Assetlib request timed out.', 'offline');
         if (next.done) break;
         size += next.value.byteLength;
-        if (size > maxBytes) throw new Error('Response exceeds the SDK byte limit.');
+        if (size > maxBytes) throw new DeliveryError('Response exceeds the SDK byte limit.', 'verification');
         chunks.push(next.value);
       }
-    } finally { await reader.cancel().catch(() => {}); }
+    } catch (error) { throw error instanceof DeliveryError ? error : new DeliveryError(error instanceof Error ? error.message : 'Artwork transfer failed.', 'offline'); }
+    finally { await reader.cancel().catch(() => {}); }
     const bytes = new Uint8Array(size);
     let offset = 0;
     for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
@@ -134,6 +143,8 @@ export class AssetClient {
   private initialized = false;
   private storageFailure: string | null = null;
   private lastError: string | null = null;
+  private lastRefreshReason: FallbackReason = 'missing';
+  private reporter?: ObservationReporter;
   private queue: Promise<unknown> = Promise.resolve();
   private timeoutMs: number;
   private fetcher: typeof fetch;
@@ -153,6 +164,10 @@ export class AssetClient {
     this.timeoutMs = options.timeoutMs ?? 8000;
     if (!integer(this.timeoutMs, 20, 30000)) fail('timeoutMs must be between 20 and 30000.');
     this.fetcher = options.fetch ?? globalThis.fetch;
+    if (options.telemetry?.enabled === true) {
+      try { this.reporter = new ObservationReporter(this.config, options.storage, this.fetcher, options.telemetry); }
+      catch { /* Invalid optional telemetry must not disable asset delivery. */ }
+    }
   }
   private serial<T>(work: () => Promise<T>): Promise<T> {
     const next = this.queue.then(work, work);
@@ -160,6 +175,18 @@ export class AssetClient {
     return next;
   }
   getStatus(): ClientStatus { return { initialized: this.initialized, sequence: this.state.highestSequence, lastError: this.lastError }; }
+  /** Best-effort: one bounded batch, retained for a later flush on failure. */
+  flush(): Promise<void> { return this.reporter?.flush() ?? Promise.resolve(); }
+  /** The adapter calls this after a verified image decodes and attaches. */
+  reportDisplay(ref: AssetRef | DynamicAssetRef, resolved: ResolvedAsset): void { this.reporter?.record('display', ref, resolved); }
+  /** The adapter reports a renderer fallback separately from resolution. */
+  reportFallback(ref: AssetRef | DynamicAssetRef, resolved: ResolvedAsset, reason: FallbackReason): void { this.reporter?.record('fallback', ref, resolved, reason); }
+  /** Stop observations and discard unsent events; artwork resolution remains usable. */
+  dispose(): void { this.reporter?.dispose(); }
+  private observed<T extends AssetStatus>(ref: AssetRef, result: T): T {
+    this.reporter?.record(result.source === 'bundle' ? 'fallback' : 'resolve', ref, result, result.fallbackReason ?? 'other');
+    return result;
+  }
   initialize(): Promise<ClientStatus> { return this.serial(async () => { await this.load(); return this.getStatus(); }); }
   private async load(): Promise<void> {
     if (this.initialized) return;
@@ -181,18 +208,23 @@ export class AssetClient {
     } catch {
       this.storageFailure = 'Stored release state could not be verified. Using bundled assets; repair or explicitly reset app data before reconnecting.';
       this.lastError = this.storageFailure;
+      this.lastRefreshReason = 'verification';
     }
   }
   refresh(): Promise<RefreshResult> {
+    void this.flush();
     return this.serial(async () => {
       await this.load();
       try {
-        if (this.storageFailure) throw new Error(this.storageFailure);
+        if (this.storageFailure) throw new DeliveryError(this.storageFailure, 'verification');
         const bytes = await fetchBounded(this.fetcher, this.config.manifestUrl, SDK_LIMITS.manifestBytes, this.timeoutMs);
-        const { envelope, payload } = verifySignedManifest(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)), this.config);
-        if (payload.sequence < this.state.highestSequence) throw new Error('An older release was rejected.');
+        let verified: ReturnType<typeof verifySignedManifest>;
+        try { verified = verifySignedManifest(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)), this.config); }
+        catch (error) { throw new DeliveryError(error instanceof Error ? error.message : 'Manifest verification failed.', 'verification'); }
+        const { envelope, payload } = verified;
+        if (payload.sequence < this.state.highestSequence) throw new DeliveryError('An older release was rejected.', 'verification');
         if (payload.sequence === this.state.highestSequence) {
-          if (envelope.payload !== this.state.history[0]?.payload) throw new Error('Conflicting content reused an existing release sequence.');
+          if (envelope.payload !== this.state.history[0]?.payload) throw new DeliveryError('Conflicting content reused an existing release sequence.', 'verification');
           this.lastError = null;
           return { updated: false, sequence: payload.sequence };
         }
@@ -206,6 +238,7 @@ export class AssetClient {
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Assetlib refresh failed.';
         this.lastError = message;
+        this.lastRefreshReason = failureReason(error);
         return { updated: false, sequence: this.state.highestSequence, error: message };
       }
     });
@@ -262,6 +295,7 @@ export class AssetClient {
     const policy = cachePolicy(options.cachePolicy ?? this.policy);
     const target = targetPixels(slot, options);
     let message = 'No compatible image bytes are available.';
+    let fallbackReason: FallbackReason = 'missing';
     for (const candidate of selectAssetCandidates(slot, target, this.formats)) {
       throwIfAborted(options.signal);
       // Preserve existing control keys; isolate every requested non-control arm and appearance.
@@ -275,16 +309,17 @@ export class AssetClient {
         const cached = await this.cached(cacheKey, policy);
         throwIfAborted(options.signal);
         if (cached && this.validBytes(cached, candidate)) return { source: 'cache', sequence, message: 'Verified artwork loaded from cache.', bytes: cached, ...identity };
+        if (cached) { message = 'Cached asset bytes do not match the signed descriptor.'; fallbackReason = 'verification'; }
         if (!download) continue;
         const bytes = await this.withTransfer(() => fetchBounded(this.fetcher, new URL(candidate.url, this.config.manifestUrl).href, candidate.bytes, this.timeoutMs, candidate.mime, options.signal, policy !== 'disk'), options.signal);
         throwIfAborted(options.signal);
-        if (!this.validBytes(bytes, candidate)) throw new Error('Asset bytes do not match the signed descriptor.');
+        if (!this.validBytes(bytes, candidate)) throw new DeliveryError('Asset bytes do not match the signed descriptor.', 'verification');
         await this.retain(cacheKey, bytes, candidate.mime, policy);
         throwIfAborted(options.signal);
         return { source: 'remote', sequence, message: 'Downloaded and verified artwork.', bytes, ...identity };
-      } catch (error) { throwIfAborted(options.signal); message = error instanceof Error ? error.message : 'Artwork could not be loaded.'; }
+      } catch (error) { throwIfAborted(options.signal); message = error instanceof Error ? error.message : 'Artwork could not be loaded.'; fallbackReason = failureReason(error); }
     }
-    return { source: 'bundle', sequence: null, arm: null, armSource: 'control', cachePolicy: policy, message };
+    return { source: 'bundle', sequence: null, arm: null, armSource: 'control', cachePolicy: policy, message, fallbackReason };
   }
   async resolve(ref: AssetRef, options: ResolveOptions = {}): Promise<ResolvedAsset> {
     if (!validKey(ref.key) || !integer(ref.width, 1, 8192) || !integer(ref.height, 1, 8192)) throw new Error('Invalid generated asset reference.');
@@ -298,16 +333,18 @@ export class AssetClient {
     throwIfAborted(options.signal);
     const resolvedOptions = { ...options, arm: decision.arm };
     let message = this.storageFailure ?? 'No compatible published artwork is available.';
+    let reason: FallbackReason = this.storageFailure ? 'verification' : !history.length && this.lastError ? this.lastRefreshReason : 'missing';
     for (const [index, { payload }] of history.entries()) {
       const slot = payload.slots.find(matches);
       if (!slot) continue;
       const selected = variantSlot(slot, decision.arm, options.appearance);
       const result = await this.resolveDescriptor(selected.slot, payload.sequence, index === 0, resolvedOptions);
-      if (result.source !== 'bundle') return { ...result, arm: selected.arm, armSource: decision.armSource, message: decisionMessage(index ? `Using verified artwork from release ${payload.sequence}. ${message}` : result.message, decision) };
+      if (result.source !== 'bundle') return this.observed(ref, { ...result, arm: selected.arm, ...(selected.appearance ? { appearance: selected.appearance } : {}), armSource: decision.armSource, message: decisionMessage(index ? `Using verified artwork from release ${payload.sequence}. ${message}` : result.message, decision) });
+      if (index === 0 || reason === 'missing') reason = result.fallbackReason ?? 'other';
       message = result.message;
     }
     throwIfAborted(options.signal);
-    return { source: 'bundle', sequence: null, arm: null, armSource: decision.armSource, message: decisionMessage(`Using bundled artwork. ${message}`, decision), ...(ref.bundledAccessibility ? { accessibility: ref.bundledAccessibility } : {}) };
+    return this.observed(ref, { source: 'bundle', sequence: null, arm: null, armSource: decision.armSource, fallbackReason: reason, message: decisionMessage(`Using bundled artwork. ${message}`, decision), ...(ref.bundledAccessibility ? { accessibility: ref.bundledAccessibility } : {}) });
   }
   async resolveStateSet(ref: StateSetRef, options: ResolveOptions = {}): Promise<ResolvedStateSet> {
     if (!validKey(ref.key) || !integer(ref.width, 1, 8192) || !integer(ref.height, 1, 8192) || !validStateRef(ref.states)) throw new Error('Invalid state set reference.');
@@ -319,6 +356,7 @@ export class AssetClient {
     const decision = await this.decideArm(ref, history[0]?.payload.slots.find(matches), options);
     throwIfAborted(options.signal);
     const resolvedOptions = { ...options, arm: decision.arm };
+    let reason: FallbackReason = this.storageFailure ? 'verification' : !history.length && this.lastError ? this.lastRefreshReason : 'missing';
     for (const [index, { payload }] of history.entries()) {
       const placement = payload.slots.find(matches);
       const selected = placement && variantSlot(placement, decision.arm, options.appearance);
@@ -327,15 +365,20 @@ export class AssetClient {
       const entries = await Promise.all(ref.states.map(async name => {
         // Optional metadata and renditions belong to this state, never to the default image.
         const result = await this.resolveDescriptor({ ...slot.states![name], key: slot.key, screen: slot.screen, width: slot.width, height: slot.height }, payload.sequence, index === 0, resolvedOptions);
-        return [name, { ...result, arm: selected!.arm, armSource: decision.armSource, message: decisionMessage(result.message, decision) }] as const;
+        return [name, { ...result, arm: selected!.arm, ...(selected!.appearance ? { appearance: selected!.appearance } : {}), armSource: decision.armSource, message: decisionMessage(result.message, decision) }] as const;
       }));
       throwIfAborted(options.signal);
-      if (entries.some(([, value]) => value.source === 'bundle') || entries.reduce((sum, [, value]) => sum + (value.bytes?.byteLength ?? 0), 0) > SDK_LIMITS.cacheBytes) continue;
+      const failed = entries.find(([, value]) => value.source === 'bundle');
+      if (failed) { if (index === 0 || reason === 'missing') reason = failed[1].fallbackReason ?? 'other'; continue; }
+      if (entries.reduce((sum, [, value]) => sum + (value.bytes?.byteLength ?? 0), 0) > SDK_LIMITS.cacheBytes) { reason = 'other'; continue; }
+      // Only the committed family is an outcome; discarded partial downloads
+      // are not observations. Each state's asset retains its actual source.
+      for (const [, value] of entries) this.observed(ref, value);
       return { source: entries.some(([, value]) => value.source === 'remote') ? 'remote' : 'cache', sequence: payload.sequence,
-        arm: selected!.arm, armSource: decision.armSource, message: decisionMessage('Complete state set pinned to one release.', decision), states: Object.freeze(Object.fromEntries(entries)) };
+        arm: selected!.arm, ...(selected!.appearance ? { appearance: selected!.appearance } : {}), armSource: decision.armSource, message: decisionMessage('Complete state set pinned to one release.', decision), states: Object.freeze(Object.fromEntries(entries)) };
     }
     throwIfAborted(options.signal);
-    return { source: 'bundle', sequence: null, arm: null, armSource: decision.armSource, message: decisionMessage('Using the complete bundled state set.', decision), states: Object.freeze({}) };
+    return this.observed(ref, { source: 'bundle', sequence: null, arm: null, armSource: decision.armSource, fallbackReason: reason, message: decisionMessage('Using the complete bundled state set.', decision), states: Object.freeze({}) });
   }
   async loadAssetPage(options: AssetPageOptions = {}): Promise<AssetPage> {
     const limit = options.limit ?? 20;
@@ -417,8 +460,10 @@ export function createAssetClient(config: AssetlibConfig, options: ClientOptions
 /** Bounded test/ephemeral adapter. Apps should use a durable platform adapter. */
 export function createMemoryStorage() {
   let state: string | null = null;
+  const installIds = new Map<string, string>();
   const assets = new Map<string, Uint8Array>();
   return {
+    async getOrCreateInstallId(key: string, create: () => string) { let id = installIds.get(key); if (id === undefined) { id = create(); installIds.set(key, id); } return id; },
     async loadState() { return state; },
     async saveState(value: string) { if (state && JSON.parse(value).highestSequence < JSON.parse(state).highestSequence) throw new Error('Stored sequence is newer.'); state = value; },
     async getAsset(hash: string) { return assets.get(hash)?.slice() ?? null; },

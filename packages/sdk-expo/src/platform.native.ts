@@ -1,7 +1,7 @@
 import { Directory, File, Paths } from 'expo-file-system';
 import { fetch as expoFetch } from 'expo/fetch';
 import { SDK_LIMITS, type AssetlibConfig, type AssetStorage, type ResolvedAsset } from '@assetlib/sdk-core';
-import { namespace, rasterDataUri, validateCacheKey, type ImageUri } from './shared';
+import { namespace, installStorageKey, rasterDataUri, validateCacheKey, type ImageUri } from './shared';
 
 export const vectorRenderingSupported = false;
 export const platformFetch = expoFetch as unknown as typeof globalThis.fetch;
@@ -34,6 +34,30 @@ export function createPlatformStorage(config: AssetlibConfig): AssetStorage {
     return candidates.sort((a, b) => JSON.parse(b).highestSequence - JSON.parse(a).highestSequence)[0] ?? null;
   };
   return {
+    getOrCreateInstallId: (key, create) => exclusive(`install:${installStorageKey(key)}`, async () => {
+      const root = new Directory(Paths.document, 'assetlib-installs-v1');
+      root.create({ intermediates: true, idempotent: true });
+      const name = installStorageKey(key);
+      for (const suffix of ['.id', '.next']) {
+        const file = new File(root, `${name}${suffix}`);
+        if (!file.exists || file.size > 64) continue;
+        const value = await file.text();
+        if (/^[a-f0-9]{32}$/.test(value)) return value;
+      }
+      let value: string;
+      try { value = create(); }
+      catch {
+        // Expo's native runtime supplies secure UUIDs even without Web Crypto.
+        const nativeUuid = (globalThis as typeof globalThis & { expo?: { uuidv4?: () => string } }).expo?.uuidv4?.();
+        if (typeof nativeUuid !== 'string') throw new Error('Secure install ID generation is unavailable.');
+        value = nativeUuid.replaceAll('-', '').toLowerCase();
+      }
+      if (!/^[a-f0-9]{32}$/.test(value)) throw new Error('Invalid random install ID.');
+      const next = new File(root, `${name}.next`);
+      next.create({ overwrite: true }); next.write(value);
+      await next.move(new File(root, `${name}.id`), { overwrite: true });
+      return value;
+    }),
     loadState: () => exclusive(scope, loadState),
     saveState: serialized => exclusive(scope, async () => {
       if (new TextEncoder().encode(serialized).length > SDK_LIMITS.stateBytes) throw new Error('State exceeds its bound.');

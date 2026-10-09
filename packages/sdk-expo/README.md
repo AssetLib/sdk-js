@@ -169,6 +169,36 @@ Caches are isolated by delivery URL, organization, app, environment, and pinned 
 
 There is no automatic app-data reset API: disconnect the client to show bundled artwork while retaining the cache. Explicitly clearing app/browser data removes stored replay protection. Multiple native clients are serialized within one JavaScript process; cross-process synchronization is outside this preview's contract. Preview 0.2 supports PNG/WebP renditions selected by explicit pixel size. Logical placement dimensions still match the generated catalog. Native caches preserve compatibility with existing `.webp` entries. Web can opt into normalized SVG with `createExpoAssetClient(config, { allowVector: true })`; enabling that option on native throws. Native SVG, PDF and animated delivery are not implemented. Browser rendering checks decoded dimensions before handing the image to Expo; native Expo decode errors fall back to the bundled image. See the core README for signature, timeout, body-size, and compatibility limits.
 
+## Optional runtime observations
+
+Telemetry is **off by default**. Enable it explicitly to report which published placement artwork the app resolves and attaches to an image renderer:
+
+```tsx
+const client = createExpoAssetClient(publicConfig, {
+  telemetry: {
+    enabled: true,
+    build: { platform: 'ios', appVersion: '1.6.0', buildNumber: '231' },
+    flushIntervalMs: 60_000,
+    maxBatch: 200,
+  },
+});
+// Optional before a controlled shutdown:
+await client.flush();
+client.dispose(); // Remove the AppState listener and stop observation timers.
+```
+
+The adapter identifies itself as `sdk-expo` version `0.3.0-preview.1`. An explicit `telemetry.sdk` or `telemetry.build` takes precedence. When the runtime can optionally require `expo-application` or `expo-constants`, the adapter reads native app version and build number (falling back to Expo config version/build). Missing packages, unavailable runtime loaders, and throwing native bridges are ignored; no new dependency is required. Supply `build` explicitly for reliable production attribution, especially with bundlers that cannot resolve optional runtime requires or in Expo Go. Without complete runtime metadata or an explicit build, batches use platform `expo` and version/build `unknown`.
+
+Only the observation contract fields are sent: environment, SDK name/version, build platform/version/number, random install ID, send time, and coalesced events with placement key, kind/count, source, asset ID/release sequence when known, effective arm/appearance when selected, and fallback reason. Bundle outcomes send only `fallback` events without asset ID or sequence. Dynamic catalog references do not emit observations because they have no placement key. Image bytes, descriptions, URLs, device identifiers, account identifiers, and status/error messages are not included.
+
+`AssetlibImage`, `AssetlibStateImage`, and `AssetlibDynamicImage` forward renderer load/error signals to the core (the core ignores dynamic references). For eligible placement images, `display` is counted once per mounted component when a remote or cached image's `onLoad` fires, including after a prop or state change if nothing was loaded earlier. **Display means decoded and attached, not seen by a person.** It is not an experiment exposure or a unique viewer. A current verified image's renderer error reports a `decode` fallback and restores bundled artwork; stale renderer events and bundled-image loads/errors do not add observations. App `onLoad` and `onError` callbacks still run. For a state family, display and decode reports identify the selected state's asset, and changing state does not count another display within that mount.
+
+Events are held in bounded memory and coalesced by coordinate. Automatic flush runs while events are queued, on `refresh()`, and when React Native `AppState` reports `background` when available. Each request has a five-second timeout; failed batches remain queued for the next flush. Background execution is best effort and is not a delivery guarantee. `flush()` sends one bounded batch; `dispose()` drops pending events after stopping the reporter, so await a flush first when needed. Observation failures never fail image resolution.
+
+The generated ID is a random 32-character hexadecimal string persisted in dedicated metadata, independent of artwork cache policy. Native Expo uses its secure UUID generator when Web Crypto is unavailable. It is per installation and per delivery origin/organization/app, shared across environments and signing-key rotations. It is never derived from a device identifier. Clearing app/browser data resets it (and also removes release verification state). An app may instead supply an opaque `telemetry.installId` of 8–64 characters; never pass an account, advertising, or hardware identifier.
+
+Enabling telemetry changes the app's data collection behavior. Review Google Play Data safety, Apple App Privacy disclosures, your privacy policy, consent requirements, and any applicable iOS privacy manifest declarations for the app's actual use. These SDK options do not configure or satisfy those declarations automatically. The console stores daily aggregates for 90 days and daily install hashes for 7 days, rather than raw events. See the console's [OBSERVATIONS.md](../../../../apps/console/OBSERVATIONS.md) for the complete fields, retention, and Data safety guidance. Install counts reflect reporting installations, not unique people or all app users.
+
 ## Validation
 
 `npm test` exercises component lifecycle behavior with a React test renderer and mocked platform boundaries, including state-family activation, pinned selection, cancellation, fallback, and native no-file data URI generation. `npm run typecheck` checks against the current Expo 57 APIs. Core security and offline tests run in the sibling package. Actual iOS/Android runtime and web delivery checks must be reported separately; these tests and typechecking are not evidence of a native device run.

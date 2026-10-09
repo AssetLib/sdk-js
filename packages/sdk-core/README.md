@@ -24,6 +24,38 @@ const asset = await client.resolve(AppAssets.Travel.coast, { pixelWidth: 600, pi
 
 Public config: `{ schemaVersion: 1, orgId, appId, environment: 'staging' | 'production', manifestUrl, pinnedPublicKey, keyId? }`. Use the matching `/api/delivery/{orgId}/{appId}/environments/{environment}/manifest` URL; the legacy `/api/delivery/{orgId}/{appId}/manifest` URL remains valid for production. Signed manifests and asset pages must match the configured environment. The PEM Ed25519 public key must come from a trusted provisioning step independent of the delivery response. Public config contains no admin credentials. Importing it from an untrusted source changes the trust anchor; verification cannot establish that the source belongs to your organization.
 
+## Optional runtime observations
+
+Telemetry is **off by default**. Opt in when creating the client, and supply your application's registered build metadata:
+
+```ts
+const client = createAssetClient(config, {
+  storage: durableStorage,
+  telemetry: {
+    enabled: true,
+    build: { platform: 'web', appVersion: '1.6.0', buildNumber: '231' },
+    // flushIntervalMs: 60_000, maxBatch: 200
+  },
+});
+const image = await client.resolve(AppAssets.Travel.coast);
+// Call only after your renderer has decoded and attached this remote/cached image.
+client.reportDisplay(AppAssets.Travel.coast, image);
+// On renderer failure: client.reportFallback(AppAssets.Travel.coast, image, 'decode');
+await client.flush();
+```
+
+Each batch goes to the configured manifest origin's `/api/delivery/{orgId}/{appId}/observations` route without credentials. It contains only schema version, environment, SDK name/version, build platform/version/number, a random install ID, send time, and coalesced event counts. Event coordinates contain the placement key, event kind, effective source, asset ID and release sequence when available, effective arm/appearance when selected, and a fallback reason (`offline`, `verification`, `decode`, `missing`, or `other`). Image bytes, image URLs, hashes, descriptions, diagnostic messages, user accounts, device identifiers, and experiment callback data are not sent. Default metadata is `sdk-core` with this package's version and `{ platform: 'web', appVersion: 'unknown', buildNumber: 'unknown' }`; supply actual build metadata for useful build comparisons.
+
+Successful placement resolutions record `resolve`; a successfully resolved state set records its committed members, never a partially discarded family. A bundled outcome records only `fallback`, without an asset ID or sequence. Dynamic catalog references have no placement key and are omitted from observations, including explicit display/fallback reports. `display` is emitted only when the adapter calls `reportDisplay`: it means decoded and attached, **not seen by a person**, and is not experiment exposure or a unique-user count. Animation playback is not observed.
+
+Without an explicit `installId`, the SDK generates a random 32-character hexadecimal ID and stores it under a dedicated per-origin, per-organization, per-app key through `storage.getOrCreateInstallId(key, create)`. Custom durable adapters must implement this optional method atomically: return the existing ID or persist the new `create()` value before returning. The same install shares its ID across staging and production. Clearing app data resets it. `createMemoryStorage()` preserves it only for that adapter instance; use durable storage to retain it across app restarts. An adapter without this method, a persistence failure, or an unavailable secure random source suppresses generated-ID telemetry. The app can instead supply its own persistent, random, opaque `installId` of 8–64 characters. Never use a device, account, advertising, or other personal identifier.
+
+Events coalesce in memory, with at most 2,000 pending coordinates. `flush()` sends one batch of at most 200 events (or a smaller `maxBatch`), capped at 64 KiB, with each count capped at 10,000. Excess count remains queued for subsequent batches. Pending events flush every 60 seconds by default and when `refresh()` runs; explicit `flush()` is useful before backgrounding. A request has a five-second deadline; failed batches stay in memory for the next flush and are not immediately retried. Reporting never blocks or fails artwork resolution. A successful send removes only the sent counts, preserving events recorded during the request. Pending events are not persisted and may be lost when the process exits; a lost response can result in duplicate counts on a later retry. `dispose()` stops telemetry timers and discards its pending observations when the client is no longer needed.
+
+Nonpositive or noninteger interval/batch settings use the defaults; `maxBatch` is capped at 200. Build versions and SDK names/versions accept 1–64 characters from letters, digits, `.`, `_`, `+`, and `-`. Invalid build, SDK, or install-ID metadata disables reporting without changing artwork resolution.
+
+Enabling reporting changes your app's data collection. Review Google Play Data safety disclosures, App Store privacy disclosures and any applicable privacy manifest requirements against your app's actual use and the console's [OBSERVATIONS.md](../../../../apps/console/OBSERVATIONS.md), which describes the payload, server retention, and disclosure guidance. A random install identifier is still sent to the service; enabling this option does not automatically update those declarations or establish consent.
+
 ## Image descriptions
 
 Image descriptors optionally carry signed `accessibility: { defaultLocale, descriptions }` metadata. Descriptions travel with the image descriptor in the release, including state members and dynamic collection images. `resolve()` returns the metadata for the image it actually selects: a cached image from an older release has that older description. Missing remote metadata never inherits the bundled image's description. Existing descriptors without the field remain valid; no extension version is required.
@@ -155,7 +187,7 @@ Verified cached animation works offline. Only the current descriptor may trigger
 - A failed current image resolves to a compatible cached image from the retained release history, then to the app's bundled fallback. Older releases never cause a new download. Eviction or more than eight accepted releases can remove a previous fallback.
 - Cache bytes are rehashed before use. The supplied adapters bound image storage to 50 MiB and 100 entries per configuration. Persistence is required before activating a new release. Corrupt replay state fails closed; it is not automatically discarded.
 
-Clearing app data, uninstalling the app, browser storage eviction, or changing the trust configuration resets local replay protection. This preview does not claim protection against a compromised device or browser. Storage adapters must enforce atomic, nondecreasing state replacement. No background refresh, resumable download, HTTP content negotiation, usage telemetry, image-render exposure events, experiment assignment, or cryptographic key rotation is implemented. Rendering support is supplied by the platform; a valid hash does not prove an image is decodable.
+Clearing app data, uninstalling the app, browser storage eviction, or changing the trust configuration resets local replay protection. This preview does not claim protection against a compromised device or browser. Storage adapters must enforce atomic, nondecreasing state replacement. No background manifest refresh, resumable download, HTTP content negotiation, experiment assignment, or cryptographic key rotation is implemented. Opt-in observation counts do not establish experiment exposure. Rendering support is supplied by the platform; a valid hash does not prove an image is decodable.
 
 ## Development
 
