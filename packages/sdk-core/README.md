@@ -22,7 +22,13 @@ const asset = await client.resolve(AppAssets.Travel.coast, { pixelWidth: 600, pi
 
 `refresh()` returns `{ updated, sequence, error? }`. Errors preserve the previous accepted release. `resolve()` returns `{ source, sequence, message, arm, armSource, bytes?, sha256?, assetId?, mime?, pixelWidth?, pixelHeight? }`. `getStatus()` returns `{ initialized, sequence, lastError }`. Use one long-lived client per configured app.
 
-Public config: `{ schemaVersion: 1, orgId, appId, environment: 'staging' | 'production', manifestUrl, pinnedPublicKey, keyId? }`. Use the matching `/api/delivery/{orgId}/{appId}/environments/{environment}/manifest` URL; the legacy `/api/delivery/{orgId}/{appId}/manifest` URL remains valid for production. Signed manifests and asset pages must match the configured environment. The PEM Ed25519 public key must come from a trusted provisioning step independent of the delivery response. Public config contains no admin credentials. Importing it from an untrusted source changes the trust anchor; verification cannot establish that the source belongs to your organization.
+Public config: `{ schemaVersion: 1, orgId, appId, environment: 'staging' | 'production', manifestUrl, pinnedPublicKey?, keyId?, pinnedPublicKeys?, keyIds? }`. Supply `pinnedPublicKey` or a nonempty `pinnedPublicKeys` array of PEM Ed25519 public keys. When both are present, the single key must exactly match a member of the set. Configurations with only `pinnedPublicKey` retain their existing behavior and parsed shape.
+
+`keyId`, when supplied, must match the single key and requires `pinnedPublicKey`. Each ID is the first 16 lowercase hexadecimal characters of SHA-256 over the exact UTF-8 PEM text. Optional `keyIds` must match the pinned keys in array order (or the single key when no set is supplied). `parsePublicConfig` derives missing IDs and returns `keyIds` for a key-set configuration. Manifests and asset pages may be signed by any member of the pinned set; each envelope's `publicKey` must exactly match that member and its `keyId` must match that key's derived ID. A supplied ID never authorizes an unpinned key.
+
+Use the matching `/api/delivery/{orgId}/{appId}/environments/{environment}/manifest` URL; the legacy `/api/delivery/{orgId}/{appId}/manifest` URL remains valid for production. Signed manifests and asset pages must match the configured environment. Every pinned key must come from a trusted provisioning step independent of the delivery response. Public config contains no admin credentials. Importing it from an untrusted source changes the trust anchor; verification cannot establish that the source belongs to your organization.
+
+To prepare a signing-key rotation, ship a trusted configuration containing both the current and next keys before the server starts signing with the next key. Keep retiring keys pinned while retained releases still need to verify. The SDK does not discover or download replacement trust anchors. The Expo adapter scopes persisted state to the complete trust set; reordering that set or changing the active single key within it preserves the namespace, while changing the set changes it. Single-key storage namespaces remain unchanged. This key-set support applies to JavaScript/Expo; native Swift/Kotlin key-set support is a later workstream, and the native-contract corpus is unchanged.
 
 ## Optional runtime observations
 
@@ -178,7 +184,7 @@ Verified cached animation works offline. Only the current descriptor may trigger
 
 ## Verification and operating limits
 
-- Ed25519 signatures are checked against the independently pinned key using strict RFC 8032 verification. An envelope cannot replace the pinned key.
+- Ed25519 signatures are checked against an independently pinned key from the configured single key or set using strict RFC 8032 verification. An envelope cannot add or replace a pinned key.
 - Schema, app, organization, environment, key ID, sequence, placement dimensions, and delivery URLs are checked. Image bytes must match the signed SHA-256 and byte count.
 - HTTPS is required. `{ allowInsecureLoopback: true }` permits HTTP only for `localhost`, `127.0.0.1`, or `::1`; it does not permit arbitrary LAN hosts.
 - Delivery is credentialless. Redirects are rejected. A streaming Fetch implementation is required so chunked responses can be bounded. The Expo adapter uses `expo/fetch` on native.
@@ -187,7 +193,7 @@ Verified cached animation works offline. Only the current descriptor may trigger
 - A failed current image resolves to a compatible cached image from the retained release history, then to the app's bundled fallback. Older releases never cause a new download. Eviction or more than eight accepted releases can remove a previous fallback.
 - Cache bytes are rehashed before use. The supplied adapters bound image storage to 50 MiB and 100 entries per configuration. Persistence is required before activating a new release. Corrupt replay state fails closed; it is not automatically discarded.
 
-Clearing app data, uninstalling the app, browser storage eviction, or changing the trust configuration resets local replay protection. This preview does not claim protection against a compromised device or browser. Storage adapters must enforce atomic, nondecreasing state replacement. No background manifest refresh, resumable download, HTTP content negotiation, experiment assignment, or cryptographic key rotation is implemented. Opt-in observation counts do not establish experiment exposure. Rendering support is supplied by the platform; a valid hash does not prove an image is decodable.
+Clearing app data, uninstalling the app, browser storage eviction, or changing the trust configuration resets local replay protection. This preview does not claim protection against a compromised device or browser. Storage adapters must enforce atomic, nondecreasing state replacement. No background manifest refresh, resumable download, HTTP content negotiation, experiment assignment, or automatic signing-key distribution is implemented. Opt-in observation counts do not establish experiment exposure. Rendering support is supplied by the platform; a valid hash does not prove an image is decodable.
 
 ## Development
 
@@ -197,7 +203,7 @@ npm test
 npm pack
 ```
 
-Tests include the shared cross-platform contract corpus, catalog subset requests, Lottie profile rejection/metadata verification, animation cache/offline/rollback/removal behavior, selection, PNG/SVG bytes and offline fallback, plus real Node Ed25519 signatures and bounded mock delivery streams. They cover signature and byte tampering, independent pins, replay across client restarts, corrupt storage, offline cache fallback, contract mismatch, URL boundaries, deadlines, and offline code generation. The npm pack contains built JavaScript and declarations; it does not require TypeScript compilation when installed.
+Tests include the shared cross-platform contract corpus, separate JavaScript key-set fixtures for a second trusted signer and an untrusted signer, catalog subset requests, Lottie profile rejection/metadata verification, animation cache/offline/rollback/removal behavior, selection, PNG/SVG bytes and offline fallback, plus real Node Ed25519 signatures and bounded mock delivery streams. They cover signature and byte tampering, independent pins, replay across client restarts, corrupt storage, offline cache fallback, contract mismatch, URL boundaries, deadlines, and offline code generation. The npm pack contains built JavaScript and declarations; it does not require TypeScript compilation when installed.
 
 ## Local 0.3 delivery preview
 

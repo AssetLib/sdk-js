@@ -94,7 +94,7 @@ const native = await import(pathToFileURL(path.join(temporary, 'platform.native.
 const { Image } = await import(pathToFileURL(path.join(temporary, 'image.mjs')));
 const web = await import(pathToFileURL(path.join(temporary, 'platform.web.mjs')));
 const { setColorScheme, background } = await import(pathToFileURL(path.join(temporary, 'react-native.mjs')));
-const { rasterDataUri } = await import(pathToFileURL(path.join(temporary, 'shared.mjs')));
+const { namespace, rasterDataUri } = await import(pathToFileURL(path.join(temporary, 'shared.mjs')));
 const resolved = (name = 'a', cachePolicy = 'none') => ({ source: 'remote', sequence: 7, message: 'verified', arm: null, armSource: 'control', sha256: name.repeat(64), assetId: name, mime: 'image/png', bytes: new Uint8Array([1, 2, 3]), cachePolicy });
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 function harness() {
@@ -622,6 +622,38 @@ test('state image observations follow the active state and ignore replaced state
   await act(async () => { view.root.findByType(Image).props.onError('decode'); });
   assert.deepEqual(failures, [[group, grown, 'decode']]);
   await act(async () => { view.unmount(); });
+});
+
+test('storage namespace preserves legacy single-key and equivalent singleton-set configurations', () => {
+  const legacy = { manifestUrl: 'https://delivery.test/manifest', orgId: 'org', appId: 'app', environment: 'production', pinnedPublicKey: 'first' };
+  assert.equal(namespace(legacy), '7363dc89776f6a9ba092184860871bce');
+  assert.equal(namespace({ ...legacy, pinnedPublicKeys: ['first'] }), namespace(legacy));
+  assert.equal(namespace({ ...legacy, pinnedPublicKey: undefined, pinnedPublicKeys: ['first'] }), namespace(legacy));
+});
+
+test('native replay state survives rotation within a pinned set and is isolated from other trust sets', async () => {
+  harness(); globalThis.__assetlibAdapter.allowFiles = true;
+  const common = { manifestUrl: 'https://delivery.test/manifest', orgId: 'org', appId: 'app', environment: 'production' };
+  const original = native.createPlatformStorage({ ...common, pinnedPublicKey: 'first', pinnedPublicKeys: ['second', 'first'] });
+  const state = JSON.stringify({ highestSequence: 7, history: [{ payload: 'verified-manifest' }] });
+  await original.saveState(state);
+  for (const signingConfig of [
+    { pinnedPublicKey: 'second', pinnedPublicKeys: ['first', 'second'] },
+    { pinnedPublicKeys: ['second', 'first'] },
+    { pinnedPublicKeys: ['first', 'second', 'first'] },
+  ]) {
+    const rotated = native.createPlatformStorage({ ...common, ...signingConfig });
+    assert.equal(await rotated.loadState(), state);
+    await assert.rejects(rotated.saveState(JSON.stringify({ highestSequence: 6, history: [{ payload: 'older' }] })), /newer or conflicting sequence/);
+  }
+  for (const signingConfig of [
+    { pinnedPublicKey: 'first' },
+    { pinnedPublicKeys: ['first', 'third'] },
+    { pinnedPublicKeys: ['third', 'fourth'] },
+  ]) {
+    const other = native.createPlatformStorage({ ...common, ...signingConfig });
+    assert.equal(await other.loadState(), null);
+  }
 });
 
 test('native install metadata persists across clients and environments outside the image cache', async () => {

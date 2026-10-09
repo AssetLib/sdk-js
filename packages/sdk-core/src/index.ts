@@ -33,7 +33,7 @@ function publicKeyBytes(pem: string): Uint8Array {
 }
 
 export function parsePublicConfig(input: unknown, options: { allowInsecureLoopback?: boolean } = {}): AssetlibConfig {
-  if (!record(input) || input.schemaVersion !== 1 || (input.environment !== 'staging' && input.environment !== 'production') || typeof input.orgId !== 'string' || !uuid.test(input.orgId) || typeof input.appId !== 'string' || !uuid.test(input.appId) || typeof input.manifestUrl !== 'string' || typeof input.pinnedPublicKey !== 'string' || input.pinnedPublicKey.length > 256) return fail('Invalid Assetlib public configuration.');
+  if (!record(input) || input.schemaVersion !== 1 || (input.environment !== 'staging' && input.environment !== 'production') || typeof input.orgId !== 'string' || !uuid.test(input.orgId) || typeof input.appId !== 'string' || !uuid.test(input.appId) || typeof input.manifestUrl !== 'string') return fail('Invalid Assetlib public configuration.');
   const url = new URL(input.manifestUrl);
   const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
   if (url.protocol !== 'https:' && !(options.allowInsecureLoopback === true && loopback && url.protocol === 'http:')) return fail('Assetlib requires HTTPS; only explicitly enabled loopback development may use HTTP.');
@@ -41,15 +41,32 @@ export function parsePublicConfig(input: unknown, options: { allowInsecureLoopba
   const environmentPath = `${deliveryPath}/environments/${input.environment}/manifest`;
   const legacyProductionPath = input.environment === 'production' && url.pathname === `${deliveryPath}/manifest`;
   if (url.username || url.password || url.search || url.hash || (url.pathname !== environmentPath && !legacyProductionPath)) return fail('Manifest URL does not match this app.');
-  publicKeyBytes(input.pinnedPublicKey);
-  const keyId = hashBytes(utf8ToBytes(input.pinnedPublicKey)).slice(0, 16);
+  const pinnedPublicKey = input.pinnedPublicKey;
+  if (pinnedPublicKey !== undefined && (typeof pinnedPublicKey !== 'string' || pinnedPublicKey.length > 256)) return fail('Invalid Assetlib public configuration.');
+  if (input.pinnedPublicKeys !== undefined && (!Array.isArray(input.pinnedPublicKeys) || input.pinnedPublicKeys.length === 0)) return fail('Expected a nonempty pinned public key set.');
+  const pinnedPublicKeys: string[] = [];
+  for (const key of input.pinnedPublicKeys ?? (pinnedPublicKey === undefined ? [] : [pinnedPublicKey])) {
+    if (typeof key !== 'string' || key.length > 256) return fail('Invalid pinned public key.');
+    publicKeyBytes(key);
+    pinnedPublicKeys.push(key);
+  }
+  if (!pinnedPublicKeys.length) return fail('A pinned public key or key set is required.');
+  if (pinnedPublicKey !== undefined && !pinnedPublicKeys.includes(pinnedPublicKey)) return fail('The single pinned public key must be in the pinned key set.');
+  const keyId = pinnedPublicKey === undefined ? undefined : hashBytes(utf8ToBytes(pinnedPublicKey)).slice(0, 16);
   if (input.keyId !== undefined && input.keyId !== keyId) return fail('Signing key ID does not match the pinned key.');
-  return { schemaVersion: 1, orgId: input.orgId, appId: input.appId, environment: input.environment, manifestUrl: url.href, pinnedPublicKey: input.pinnedPublicKey, keyId };
+  const keyIds = pinnedPublicKeys.map(key => hashBytes(utf8ToBytes(key)).slice(0, 16));
+  if (input.keyIds !== undefined && (!Array.isArray(input.keyIds) || input.keyIds.length !== keyIds.length || keyIds.some((id, index) => id !== (input.keyIds as unknown[])[index]))) return fail('Signing key IDs do not match the pinned key set.');
+  return { schemaVersion: 1, orgId: input.orgId, appId: input.appId, environment: input.environment, manifestUrl: url.href,
+    ...(pinnedPublicKey !== undefined ? { pinnedPublicKey, keyId } : {}),
+    ...(input.pinnedPublicKeys !== undefined ? { pinnedPublicKeys } : {}),
+    ...(input.pinnedPublicKeys !== undefined || input.keyIds !== undefined ? { keyIds } : {}),
+  };
 }
 
 function verifyEnvelope(input: unknown, config: AssetlibConfig): { envelope: SignedManifest; payload: unknown } {
-  if (!record(input) || input.algorithm !== 'Ed25519' || input.publicKey !== config.pinnedPublicKey || input.keyId !== hashBytes(utf8ToBytes(config.pinnedPublicKey)).slice(0, 16) || typeof input.payload !== 'string' || utf8ToBytes(input.payload).length > SDK_LIMITS.manifestBytes || typeof input.signature !== 'string' || !/^[A-Za-z0-9+/]{86}==$/.test(input.signature)) return fail('Invalid signed manifest envelope.');
-  if (!ed25519.verify(base64.decode(input.signature), utf8ToBytes(input.payload), publicKeyBytes(config.pinnedPublicKey), { zip215: false })) return fail('Manifest signature verification failed.');
+  const pinnedPublicKeys = config.pinnedPublicKeys ?? (config.pinnedPublicKey === undefined ? [] : [config.pinnedPublicKey]);
+  if (!record(input) || input.algorithm !== 'Ed25519' || typeof input.publicKey !== 'string' || !pinnedPublicKeys.includes(input.publicKey) || input.keyId !== hashBytes(utf8ToBytes(input.publicKey)).slice(0, 16) || typeof input.payload !== 'string' || utf8ToBytes(input.payload).length > SDK_LIMITS.manifestBytes || typeof input.signature !== 'string' || !/^[A-Za-z0-9+/]{86}==$/.test(input.signature)) return fail('Invalid signed manifest envelope.');
+  if (!ed25519.verify(base64.decode(input.signature), utf8ToBytes(input.payload), publicKeyBytes(input.publicKey), { zip215: false })) return fail('Manifest signature verification failed.');
   return { envelope: input as SignedManifest, payload: JSON.parse(input.payload) };
 }
 

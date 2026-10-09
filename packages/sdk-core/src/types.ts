@@ -1,4 +1,4 @@
-export type AssetlibConfig = { schemaVersion: 1; orgId: string; appId: string; environment: 'staging' | 'production'; manifestUrl: string; pinnedPublicKey: string; keyId?: string };
+export type AssetlibConfig = { schemaVersion: 1; orgId: string; appId: string; environment: 'staging' | 'production'; manifestUrl: string; pinnedPublicKey?: string; keyId?: string; pinnedPublicKeys?: string[]; keyIds?: string[] };
 export type AssetAccessibility = { readonly defaultLocale: string; readonly descriptions: Readonly<Record<string, string>> };
 export type Appearance = 'light' | 'dark';
 export type AssetVariants = { readonly appearance?: readonly Appearance[]; readonly arm?: readonly string[] };

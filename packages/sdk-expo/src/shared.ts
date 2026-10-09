@@ -1,5 +1,10 @@
 import { hashBytes, SDK_LIMITS, type AssetlibConfig, type ResolvedAsset } from '@assetlib/sdk-core';
-export const namespace = (config: AssetlibConfig): string => hashBytes(new TextEncoder().encode([config.manifestUrl, config.orgId, config.appId, config.environment, config.pinnedPublicKey].join('\n'))).slice(0, 32);
+export const namespace = (config: AssetlibConfig): string => {
+  // Rotation within an unchanged trust set must retain its durable replay state.
+  const keys = config.pinnedPublicKeys ? [...new Set(config.pinnedPublicKeys)].sort() : [config.pinnedPublicKey];
+  const pinnedKeys = keys.length === 1 ? keys[0] : JSON.stringify(keys);
+  return hashBytes(new TextEncoder().encode([config.manifestUrl, config.orgId, config.appId, config.environment, pinnedKeys].join('\n'))).slice(0, 32);
+};
 /** The core supplies an origin/org/app key independent of environment and signing key. */
 export const installStorageKey = (key: string): string => hashBytes(new TextEncoder().encode(key));
 export type ImageUri = { uri: string; release(): void };

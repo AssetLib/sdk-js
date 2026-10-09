@@ -1,0 +1,15 @@
+{
+  "config": "config.json",
+  "manifests": [
+    {
+      "file": "manifests/second-key-seq2.json",
+      "verification": "accept",
+      "reason": "A valid signature from the second independently pinned Ed25519 key."
+    },
+    {
+      "file": "manifests/outside-key-seq2.json",
+      "verification": "reject",
+      "reason": "A valid signature from a third Ed25519 key that is absent from the pinned set."
+    }
+  ]
+}
