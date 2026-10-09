@@ -60,7 +60,11 @@ Events coalesce in memory, with at most 2,000 pending coordinates. `flush()` sen
 
 Nonpositive or noninteger interval/batch settings use the defaults; `maxBatch` is capped at 200. Build versions and SDK names/versions accept 1–64 characters from letters, digits, `.`, `_`, `+`, and `-`. Invalid build, SDK, or install-ID metadata disables reporting without changing artwork resolution.
 
-Enabling reporting changes your app's data collection. Review Google Play Data safety disclosures, App Store privacy disclosures and any applicable privacy manifest requirements against your app's actual use and the console's [OBSERVATIONS.md](../../../../apps/console/OBSERVATIONS.md), which describes the payload, server retention, and disclosure guidance. A random install identifier is still sent to the service; enabling this option does not automatically update those declarations or establish consent.
+The hosted Assetlib service validates each batch as a whole, accepts at most 64 KiB per request, and stores no raw event log and no raw install ID. Accepted counts are added to daily aggregates keyed by the UTC day of receipt, kept for 90 UTC days. For install coverage it keeps a SHA-256 hash of the install ID and UTC day, per app, environment and day, for 7 UTC days. Expired rows are removed when later batches arrive, not on a fixed schedule. Reporting installs summed over several days are install-days, not unique installations or people. Request infrastructure handles network addresses and headers; they are not stored in the aggregates.
+
+Enabling reporting changes your app's data collection. Review Google Play Data safety disclosures, App Store privacy disclosures and any applicable privacy manifest requirements against your app's actual use. A random install identifier is still sent to the service; enabling this option does not automatically update those declarations or establish consent. Hashing an identifier does not by itself make it anonymous or remove disclosure requirements. Suggested wording for an app team's data inventory, to adapt to your actual configuration:
+
+> When enabled, Assetlib sends app/build version information, placement and asset identifiers, image resolution/display/fallback counts, and a random app-install identifier to our configured Assetlib service for asset-delivery diagnostics. Telemetry is disabled by default. The service stores daily aggregates and day-specific install hashes, not raw event logs or the raw install identifier. A display report means the renderer decoded and attached an image, not that a person viewed it.
 
 ## Image descriptions
 
@@ -207,12 +211,12 @@ npm pack
 
 Tests include the shared cross-platform contract corpus, separate JavaScript key-set fixtures for a second trusted signer and an untrusted signer, catalog subset requests, Lottie profile rejection/metadata verification, animation cache/offline/rollback/removal behavior, selection, PNG/SVG bytes and offline fallback, plus real Node Ed25519 signatures and bounded mock delivery streams. They cover signature and byte tampering, independent pins, replay across client restarts, corrupt storage, offline cache fallback, contract mismatch, URL boundaries, deadlines, and offline code generation. The npm pack contains built JavaScript and declarations; it does not require TypeScript compilation when installed.
 
-## Local 0.3 delivery preview
+## State sets, catalog pages, and cache policies
 
-The unpublished 0.3 preview adds `StateSetRef` / `resolveStateSet`, signed `loadAssetPage` / `resolveAsset` runtime handles, and `cachePolicy: 'disk' | 'memory' | 'none'`. The default remains `disk`; ephemeral image policies preserve durable signed release state. Image requests are cancellable and bounded to four concurrent transfers by default. `clearMemoryCache()` releases retained session bytes.
+Release 0.4.0-preview.1 adds `StateSetRef` / `resolveStateSet`, signed `loadAssetPage` / `resolveAsset` runtime handles, and `cachePolicy: 'disk' | 'memory' | 'none'`. The default remains `disk`; ephemeral image policies preserve durable signed release state. Image requests are cancellable and bounded to four concurrent transfers by default. `clearMemoryCache()` releases retained session bytes.
 
 A state set declares 2–16 unique states in the checked-in catalog (`placements[].states`); code generation preserves those literal names. Resolve the complete family once and select its returned state. If any required member is unavailable, the whole family uses an eligible older cached release or the bundled family. Do not substitute one progress stage for another.
 
 Catalog metadata pages are signed, scoped to the app/release/request cursor, and contain at most 50 image references. They fetch no image bodies. Preserve the first page's `sequence` on continuation requests. Runtime handles are bound to their issuing client and cannot be serialized or reconstructed as trusted references. Use the Expo virtualized-list example for visible-only image resolution.
 
-These additions currently apply to JavaScript/Expo. Swift/Kotlin retain legacy image APIs. Catalog-only manifests with no slots are unsupported by those older clients. No publication or production-scale catalog capacity is implied by this local version.
+These additions currently apply to JavaScript/Expo. Swift/Kotlin retain legacy image APIs. Catalog-only manifests with no slots are unsupported by those older clients. No production-scale catalog capacity is implied.
