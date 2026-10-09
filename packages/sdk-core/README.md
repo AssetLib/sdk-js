@@ -209,7 +209,7 @@ npm test
 npm pack
 ```
 
-Tests include the shared cross-platform contract corpus, separate JavaScript key-set fixtures for a second trusted signer and an untrusted signer, catalog subset requests, Lottie profile rejection/metadata verification, animation cache/offline/rollback/removal behavior, selection, PNG/SVG bytes and offline fallback, plus real Node Ed25519 signatures and bounded mock delivery streams. They cover signature and byte tampering, independent pins, replay across client restarts, corrupt storage, offline cache fallback, contract mismatch, URL boundaries, deadlines, and offline code generation. The npm pack contains built JavaScript and declarations; it does not require TypeScript compilation when installed.
+Tests include the shared cross-platform contract corpus (`test/fixtures/shared`, byte-identical with the Swift and Kotlin SDKs' copies: 100 signed manifest cases, 18 appearance/arm resolution cases, staging configuration, stateful replay, byte-failure and rendition selection cases), separate JavaScript key-set fixtures for a second trusted signer and an untrusted signer, catalog subset requests, Lottie profile rejection/metadata verification, animation cache/offline/rollback/removal behavior, selection, PNG/SVG bytes and offline fallback, plus real Node Ed25519 signatures and bounded mock delivery streams. They cover signature and byte tampering, independent pins, replay across client restarts, corrupt storage, offline cache fallback, contract mismatch, URL boundaries, deadlines, and offline code generation. The npm pack contains built JavaScript and declarations; it does not require TypeScript compilation when installed.
 
 ## State sets, catalog pages, and cache policies
 

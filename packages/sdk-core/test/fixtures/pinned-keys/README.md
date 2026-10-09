@@ -1,8 +1,8 @@
 # JavaScript pinned key set fixtures
 
-These fixtures are specific to Workstream N. They do not extend the shared
-native-contract corpus or its `cases.json`; native key-set support is a later
-workstream.
+These fixtures are specific to the JavaScript SDK. They are not part of the
+shared contract corpus in `../shared/` or its `cases.json`, and the Swift and
+Kotlin SDKs do not vendor them.
 
 `config.json` pins the original key from `../config.json` and a second key. The
 second-key manifest must verify against that set. The outside-key manifest has a

@@ -30,7 +30,7 @@ node packages/cli/bin/assetlib.mjs check --catalog assetlib.catalog.json --gener
 ## Layout
 
 - `packages/sdk-core/`: `@assetlib/sdk-core`. `src/index.ts` holds config parsing, signature verification, durable state and resolution. `src/delivery.ts`, `renditions.ts`, `lottie.ts`, `accessibility.ts` and `telemetry.ts` hold the rest. `bin/codegen.mjs` is the `assetlib-codegen` bin.
-- `packages/sdk-core/test/fixtures/`: the signed contract corpus (`cases.json`, `SHA256SUMS`, `TEST_ONLY` keys). `pinned-keys/` holds key-set fixtures that only the JS SDK uses.
+- `packages/sdk-core/test/fixtures/`: the JS signed corpus (`cases.json`, `SHA256SUMS`, `TEST_ONLY` keys) used by most core tests. `pinned-keys/` holds key-set fixtures that only the JS SDK uses. `shared/` is a byte-identical copy of the shared contract corpus that AssetLib/sdk-swift and AssetLib/sdk-android vendor, with its own `SHA256SUMS`; `test/shared-contract.test.mjs` runs all of it.
 - `packages/sdk-expo/`: `@assetlib/sdk-expo`, which ships TSX source with no build step. Metro chooses `src/platform.native.ts` or `src/platform.web.ts`.
 - `packages/cli/`: `@assetlib/cli`. `src/catalog.mjs` handles validation, the canonical hash and formatting, `src/adopt.mjs` is the codemod, and `src/references.mjs` and `src/detection.mjs` handle the reference scan and CI metadata.
 - `packages/audit/`: `@assetlib/audit`, the read-only image inventory.
@@ -53,7 +53,8 @@ Delivery and trust (sdk-core, sdk-expo):
 
 Contract fixtures:
 - Signed fixtures were produced with the `TEST_ONLY` seed. Never hand-edit a signed file. Every fixture change must update `SHA256SUMS`, which `test/appearance.test.mjs` and `test/pinned-keys.test.mjs` check. Never trust a `TEST_ONLY` key outside tests.
-- This copy of the corpus (94 manifest cases plus 6 stateful) differs from the copies in AssetLib/sdk-swift and AssetLib/sdk-android. Those include staging-config and variant-cell cases that this copy lacks, and this copy has JS-only appearance and arm fixtures. When you change a shared verification rule, check those repos too.
+- `test/fixtures/shared/` (100 manifest cases, 18 variant resolution cases, 6 stateful, 2 byte-failure and the rendition selections) must stay byte-identical with the Swift and Kotlin copies. Never edit it in place: replace the whole directory with a regenerated corpus (keep its `README.txt`) and update all three SDKs together. `shared-contract.test.mjs` checks its `SHA256SUMS`, that every manifest is indexed, and that files it shares with the JS corpus are identical.
+- The JS corpus in `test/fixtures/` (94 manifest cases plus 6 stateful) adds JS-only appearance and arm fixtures and lacks the staging-config and variant-cell cases, which live only in `shared/`. When you change a shared verification rule, run both and check the native repos too.
 
 Catalog, codegen and CLI:
 - Placements are declared in the app repo: `assetlib.catalog.json`, `assetlib sync` in CI and `assetlib adopt`. Do not build flows where the console is the primary place to define placement contracts.
