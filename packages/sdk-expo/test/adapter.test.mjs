@@ -31,18 +31,43 @@ export const createPlatformStorage = config => ({ persistentConfig: config });
 export const imageUri = (...args) => globalThis.__assetlibAdapter.imageUri(...args);
 `);
 await writeFile(path.join(temporary, 'image.mjs'), `export function Image() { return null; }`);
+await writeFile(path.join(temporary, 'react-native.mjs'), `
+import { useSyncExternalStore } from 'react';
+const listeners = new Set();
+const subscribe = listener => { listeners.add(listener); return () => listeners.delete(listener); };
+const snapshot = () => globalThis.__assetlibAdapter.colorScheme ?? null;
+export function useColorScheme() { return useSyncExternalStore(subscribe, snapshot); }
+export function setColorScheme(value) {
+  globalThis.__assetlibAdapter.colorScheme = value;
+  for (const listener of listeners) listener();
+}
+`);
 await writeFile(path.join(temporary, 'filesystem.mjs'), `
-export class File { constructor() { globalThis.__assetlibAdapter.fileCalls++; throw new Error('Unexpected file access'); } }
-export class Directory { constructor() { globalThis.__assetlibAdapter.fileCalls++; throw new Error('Unexpected directory access'); } }
+export class File {
+  constructor(_directory, name) {
+    globalThis.__assetlibAdapter.fileCalls++;
+    if (!globalThis.__assetlibAdapter.allowFiles) throw new Error('Unexpected file access');
+    this.exists = globalThis.__assetlibAdapter.files.includes(name);
+    this.uri = 'file:///mock/' + name;
+  }
+}
+export class Directory {
+  constructor() {
+    globalThis.__assetlibAdapter.fileCalls++;
+    if (!globalThis.__assetlibAdapter.allowFiles) throw new Error('Unexpected directory access');
+  }
+  create() {}
+}
 export const Paths = { document: '/documents' };
 `);
 await writeFile(path.join(temporary, 'fetch.mjs'), `export const fetch = globalThis.fetch;`);
-await transpile('index.tsx', { '@assetlib/sdk-core': './core.mjs', './platform': './platform.mjs', './shared': './shared.mjs', 'expo-image': './image.mjs' });
+await transpile('index.tsx', { '@assetlib/sdk-core': './core.mjs', './platform': './platform.mjs', './shared': './shared.mjs', 'expo-image': './image.mjs', 'react-native': './react-native.mjs' });
 await transpile('shared.ts', { '@assetlib/sdk-core': './core.mjs' });
 await transpile('platform.native.ts', { '@assetlib/sdk-core': './core.mjs', './shared': './shared.mjs', 'expo-file-system': './filesystem.mjs', 'expo/fetch': './fetch.mjs' });
 const adapter = await import(pathToFileURL(path.join(temporary, 'index.mjs')));
 const native = await import(pathToFileURL(path.join(temporary, 'platform.native.mjs')));
 const { Image } = await import(pathToFileURL(path.join(temporary, 'image.mjs')));
+const { setColorScheme } = await import(pathToFileURL(path.join(temporary, 'react-native.mjs')));
 const { rasterDataUri } = await import(pathToFileURL(path.join(temporary, 'shared.mjs')));
 const resolved = (name = 'a', cachePolicy = 'none') => ({ source: 'remote', sequence: 7, message: 'verified', sha256: name.repeat(64), assetId: name, mime: 'image/png', bytes: new Uint8Array([1, 2, 3]), cachePolicy });
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
@@ -64,6 +89,17 @@ test('native memory and none policies render exact bytes without filesystem acce
     image.release();
   }
   assert.equal(globalThis.__assetlibAdapter.fileCalls, 0);
+});
+
+test('native disk rendering opens the appearance cache key and supports legacy content-hash entries', async () => {
+  harness();
+  const hash = 'a'.repeat(64), cacheKey = 'b'.repeat(64);
+  Object.assign(globalThis.__assetlibAdapter, { allowFiles: true, files: [`${cacheKey}.png`] });
+  assert.equal((await native.imageUri(config, { ...resolved('a', 'disk'), cacheKey })).uri, `file:///mock/${cacheKey}.png`);
+  await assert.rejects(native.imageUri(config, resolved('a', 'disk')), /evicted/);
+  globalThis.__assetlibAdapter.files = [`${hash}.png`];
+  assert.equal((await native.imageUri(config, resolved('a', 'disk'))).uri, `file:///mock/${hash}.png`);
+  await assert.rejects(native.imageUri(config, { ...resolved('a', 'disk'), cacheKey: '../invalid' }), /Invalid cache key/);
 });
 
 test('data URI encoding handles padding and chunk boundaries and rejects unsupported payloads', () => {
@@ -261,4 +297,102 @@ test('a state family missing one description stays entirely bundled in descripti
   assert.equal(view.root.findByType(Image).props.source, 2);
   assert.equal(view.root.findByType(Image).props.accessibilityLabel, 'Bundle grown');
   await act(async () => { view.unmount(); });
+});
+
+for (const [component, method, asset] of [
+  ['AssetlibImage', 'resolve', { key: 'travel.coast', width: 120, height: 120 }],
+  ['AssetlibDynamicImage', 'resolveAsset', { kind: 'dynamic', assetId: 'coast', sequence: 7 }],
+]) {
+  test(`${component} follows effective system appearance, aborts stale requests and selects dark fallbacks`, async () => {
+    const { released } = harness(), calls = [];
+    const client = { config, [method]: (_asset, options) => {
+      const pending = deferred(); calls.push({ options, ...pending }); return pending.promise;
+    } };
+    const props = { client, asset, fallback: 1, fallbackDark: 2 };
+    let view;
+    await act(async () => { view = create(React.createElement(adapter[component], props)); });
+    assert.equal(calls[0].options.appearance, undefined);
+    assert.equal(view.root.findByType(Image).props.source, 1);
+    await act(async () => { setColorScheme('dark'); });
+    assert.equal(calls[0].options.signal.aborted, true);
+    assert.equal(calls[1].options.appearance, 'dark');
+    assert.equal(view.root.findByType(Image).props.source, 2);
+    assert.equal(view.root.findByType(Image).props.appearance, undefined);
+    assert.equal(view.root.findByType(Image).props.fallbackDark, undefined);
+    await act(async () => { calls[1].resolve(resolved('b')); calls[0].resolve(resolved('a')); });
+    assert.deepEqual(view.root.findByType(Image).props.source, { uri: 'verified:b' });
+    await act(async () => { setColorScheme('light'); });
+    assert.equal(calls[2].options.appearance, 'light');
+    assert.equal(view.root.findByType(Image).props.source, 1);
+    assert.ok(released.includes('b'));
+    await act(async () => { setColorScheme(null); });
+    assert.equal(calls[3].options.appearance, undefined);
+    assert.equal(view.root.findByType(Image).props.source, 1);
+    await act(async () => { setColorScheme('unspecified'); });
+    assert.equal(calls.length, 4, 'unspecified system appearance also means no preference');
+    await act(async () => { view.update(React.createElement(adapter[component], { ...props, appearance: 'light' })); });
+    assert.equal(calls[4].options.appearance, 'light');
+    await act(async () => { setColorScheme('dark'); });
+    assert.equal(calls.length, 5, 'an explicit light preference does not re-resolve for system changes');
+    await act(async () => { view.update(React.createElement(adapter[component], { ...props, appearance: 'dark' })); });
+    assert.equal(calls[5].options.appearance, 'dark');
+    assert.equal(view.root.findByType(Image).props.source, 2);
+    await act(async () => { calls[5].resolve(resolved('c')); });
+    await act(async () => { view.root.findByType(Image).props.onError({ error: 'decode' }); });
+    assert.equal(view.root.findByType(Image).props.source, 2);
+    await act(async () => { view.update(React.createElement(adapter[component], { ...props, fallbackDark: undefined, appearance: 'dark' })); });
+    assert.equal(view.root.findByType(Image).props.source, 1, 'dark fallback remains optional');
+    assert.equal(calls.length, 6);
+    await act(async () => { view.unmount(); });
+  });
+}
+
+test('state images re-resolve a whole family for appearance changes and use matching dark bundle states', async () => {
+  const { released } = harness(), calls = [];
+  const client = { config, resolveStateSet: (_asset, options) => {
+    const pending = deferred(); calls.push({ options, ...pending }); return pending.promise;
+  } };
+  const props = { client, asset: group, state: 'sprout', fallbacks, fallbacksDark: { sprout: 3, grown: 4 } };
+  const family = (a, b) => ({ source: 'remote', sequence: 7, message: 'complete', states: { sprout: resolved(a), grown: resolved(b) } });
+  let view;
+  await act(async () => { view = create(React.createElement(adapter.AssetlibStateImage, props)); });
+  assert.equal(calls[0].options.appearance, undefined);
+  await act(async () => { calls[0].resolve(family('a', 'b')); });
+  assert.deepEqual(view.root.findByType(Image).props.source, { uri: 'verified:a' });
+  await act(async () => { setColorScheme('dark'); });
+  assert.equal(calls[1].options.appearance, 'dark');
+  assert.equal(calls[0].options.signal.aborted, true);
+  assert.equal(view.root.findByType(Image).props.source, 3);
+  assert.ok(released.includes('a') && released.includes('b'));
+  await act(async () => { view.update(React.createElement(adapter.AssetlibStateImage, { ...props, state: 'grown' })); });
+  assert.equal(view.root.findByType(Image).props.source, 4);
+  assert.equal(calls.length, 2);
+  await act(async () => { calls[1].resolve(family('c', 'd')); });
+  assert.deepEqual(view.root.findByType(Image).props.source, { uri: 'verified:d' });
+  await act(async () => { view.root.findByType(Image).props.onError({ error: 'decode' }); });
+  assert.equal(view.root.findByType(Image).props.source, 4);
+  await act(async () => { view.update(React.createElement(adapter.AssetlibStateImage, props)); });
+  assert.equal(view.root.findByType(Image).props.source, 3);
+  assert.equal(calls.length, 2);
+  await act(async () => { setColorScheme('light'); });
+  assert.equal(calls[2].options.appearance, 'light');
+  assert.equal(view.root.findByType(Image).props.source, 1);
+  await act(async () => { setColorScheme(null); });
+  assert.equal(calls[3].options.appearance, undefined);
+  await act(async () => { view.update(React.createElement(adapter.AssetlibStateImage, { ...props, appearance: 'dark', fallbacksDark: undefined })); });
+  assert.equal(calls[4].options.appearance, 'dark');
+  assert.equal(view.root.findByType(Image).props.source, 1);
+  await act(async () => { setColorScheme('dark'); });
+  assert.equal(calls.length, 5, 'unchanged effective appearance keeps the request pinned');
+  await act(async () => { view.unmount(); });
+});
+
+test('a supplied dark bundle must cover every state instead of borrowing from the any bundle', async () => {
+  harness();
+  const client = { config, resolveStateSet: async () => ({ source: 'bundle', sequence: null, message: 'offline', states: {} }) };
+  await assert.rejects(async () => {
+    await act(async () => {
+      create(React.createElement(adapter.AssetlibStateImage, { client, asset: group, state: 'sprout', fallbacks, fallbacksDark: { sprout: 3 }, appearance: 'dark' }));
+    });
+  }, /Every artwork state requires its own dark bundled fallback/);
 });

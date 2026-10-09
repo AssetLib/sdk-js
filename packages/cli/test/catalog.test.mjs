@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -37,9 +37,29 @@ test('standalone generation is byte-identical to the existing core codegen', asy
   const catalog = structuredClone(input);
   catalog.placements[0].bundledAccessibility = { defaultLocale: 'en', descriptions: { en: 'Coast', th: 'ชายฝั่ง' } };
   catalog.placements[1].bundledStateAccessibility = { empty: { defaultLocale: 'en', descriptions: { en: 'Empty garden' } } };
+  catalog.placements[0].variants = { appearance: ['dark'] };
+  catalog.placements[1].variants = { appearance: ['light', 'dark'] };
   await writeFile(file, JSON.stringify(catalog));
   const existing = fileURLToPath(new URL('../../sdk-core/bin/codegen.mjs', import.meta.url));
   assert.equal(generateCatalog(await readCatalog(file)), execFileSync(process.execPath, [existing, file], { encoding: 'utf8' }));
+  const generated = JSON.parse(generateCatalog(catalog).split('export const AppAssets = ')[1].split(' as const;')[0]);
+  assert.deepEqual(generated.Travel.coast.variants, { appearance: ['dark'] });
+  assert.deepEqual(generated.Tasks.garden.variants, { appearance: ['light', 'dark'] });
+});
+
+test('both codegens reject unknown axes, values and malformed appearance declarations', async t => {
+  const file = await fixture(t);
+  const existing = fileURLToPath(new URL('../../sdk-core/bin/codegen.mjs', import.meta.url));
+  for (const variants of [null, [], {}, 'dark', { appearance: [] }, { appearance: 'dark' }, { appearance: ['dark', 'dark'] }, { appearance: ['any'] }, { appearance: [1] }, { platform: ['ios'] }, { appearance: ['dark'], locale: ['th'] }]) {
+    const catalog = structuredClone(input);
+    catalog.placements[0].variants = variants;
+    await writeFile(file, JSON.stringify(catalog));
+    assert.throws(() => generateCatalog(catalog), /Variants/);
+    await assert.rejects(readCatalog(file), /Variants/);
+    const result = spawnSync(process.execPath, [existing, file], { encoding: 'utf8' });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Variants/);
+  }
 });
 
 test('catalog validation rejects malformed catalogs, placements, states, symbols and descriptions', async t => {

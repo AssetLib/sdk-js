@@ -83,8 +83,10 @@ export async function imageUri(config: AssetlibConfig, result: ResolvedAsset): P
   validateCacheKey(result.sha256);
   if (!['image/webp', 'image/png'].includes(result.mime ?? '')) throw new Error('Unsupported native image format.');
   if (result.cachePolicy === 'memory' || result.cachePolicy === 'none') return rasterDataUri(result);
+  const cacheKey = result.cacheKey ?? result.sha256;
+  validateCacheKey(cacheKey);
   const extension = result.mime === 'image/png' ? 'png' : 'webp';
-  const file = new File(directories(config).images, `${result.sha256}.${extension}`);
+  const file = new File(directories(config).images, `${cacheKey}.${extension}`);
   if (!file.exists) throw new Error('The verified image was evicted from the local cache.');
   return { uri: file.uri, release() {} };
 }

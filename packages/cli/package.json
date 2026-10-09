@@ -11,6 +11,10 @@
     "test": "node --test test/*.test.mjs",
     "verify": "node --check bin/assetlib.mjs && node bin/assetlib.mjs --help"
   },
+  "dependencies": {
+    "image-size": "2.0.4",
+    "typescript": "5.9.3"
+  },
   "publishConfig": { "access": "public", "provenance": false },
   "repository": {
     "type": "git",

@@ -15,9 +15,51 @@ export function validateDescriptor(value: unknown, width: number, height: number
   if ('accessibility' in value) validateAccessibility(value.accessibility);
 }
 
+function validateStateImages(states: Record<string, unknown>, slot: Record<string, unknown>, config: AssetlibConfig, renditionSchemaVersion: unknown): void {
+  for (const value of Object.values(states)) validateDescriptor(value, Number(slot.width), Number(slot.height), config, renditionSchemaVersion);
+  const maximumBytes = Object.values(states).reduce((sum: number, value) => {
+    const descriptor = value as { bytes: number; renditions?: { bytes: number }[] };
+    return sum + Math.max(descriptor.bytes, ...(descriptor.renditions ?? []).map(item => item.bytes));
+  }, 0);
+  if (maximumBytes > 50 * 1024 * 1024) throw new Error('State set exceeds the complete-group byte budget.');
+}
+
+function equivalent(left: unknown, right: unknown): boolean {
+  if (left === right) return true;
+  if (Array.isArray(left) && Array.isArray(right)) return left.length === right.length && left.every((item, index) => equivalent(item, right[index]));
+  if (!record(left) || !record(right)) return false;
+  const names = Object.keys(left);
+  return names.length === Object.keys(right).length && names.every(name => Object.hasOwn(right, name) && equivalent(left[name], right[name]));
+}
+
+function validateCells(slot: Record<string, unknown>, payload: Record<string, unknown>, config: AssetlibConfig): void {
+  if (!('variants' in slot)) {
+    if ('cells' in slot) throw new Error('Appearance cells require declared variants.');
+    return;
+  }
+  const variants = slot.variants;
+  if (payload.variantSchemaVersion !== 1 || !record(variants) || Object.keys(variants).length !== 1 || !Array.isArray(variants.appearance) || variants.appearance.length < 1 || variants.appearance.length > 2 || variants.appearance.some(value => value !== 'light' && value !== 'dark') || new Set(variants.appearance).size !== variants.appearance.length) throw new Error('Invalid appearance variants.');
+  if (!('cells' in slot)) return;
+  if (!Array.isArray(slot.cells) || slot.cells.length > variants.appearance.length) throw new Error('Invalid appearance cells.');
+  const appearances = new Set<string>();
+  for (const cell of slot.cells) {
+    if (!record(cell) || typeof cell.appearance !== 'string' || !variants.appearance.includes(cell.appearance) || appearances.has(cell.appearance)) throw new Error('Invalid or duplicate appearance cell.');
+    appearances.add(cell.appearance);
+    validateDescriptor(cell, Number(slot.width), Number(slot.height), config, payload.renditionSchemaVersion);
+    if ('defaultState' in cell) throw new Error('Appearance cells use the placement default state.');
+    if (record(slot.states)) {
+      if (!record(cell.states) || Object.keys(cell.states).length !== Object.keys(slot.states).length || Object.keys(slot.states).some(name => !Object.hasOwn(cell.states as object, name))) throw new Error('Appearance state family must contain every declared state.');
+      validateStateImages(cell.states, slot, config, payload.renditionSchemaVersion);
+      const fallback = cell.states[String(slot.defaultState)] as Record<string, unknown>;
+      if (['assetId', 'sha256', 'url', 'mime', 'bytes', 'renditions', 'accessibility'].some(name => !equivalent(cell[name], fallback[name]))) throw new Error('Appearance artwork must match its default state.');
+    } else if ('states' in cell) throw new Error('A stateless placement cannot have appearance states.');
+  }
+}
+
 export function validateDeliveryExtensions(payload: Record<string, unknown>, config: AssetlibConfig): void {
   if ('stateSchemaVersion' in payload && payload.stateSchemaVersion !== 1) throw new Error('Unsupported state schema.');
   if ('catalogSchemaVersion' in payload && payload.catalogSchemaVersion !== 1) throw new Error('Unsupported catalog schema.');
+  if ('variantSchemaVersion' in payload && payload.variantSchemaVersion !== 1) throw new Error('Unsupported variant schema.');
   if ('catalog' in payload) {
     if (payload.catalogSchemaVersion !== 1 || !record(payload.catalog) || !integer(payload.catalog.count, 0, 1_000_000) || typeof payload.catalog.url !== 'string') throw new Error('Invalid catalog descriptor.');
     const url = new URL(payload.catalog.url, config.manifestUrl);
@@ -29,19 +71,16 @@ export function validateDeliveryExtensions(payload: Record<string, unknown>, con
   for (const slot of payload.slots as Record<string, unknown>[]) {
     if (!('states' in slot)) {
       if ('defaultState' in slot) throw new Error('A default state requires a state set.');
+      validateCells(slot, payload, config);
       continue;
     }
     if (payload.stateSchemaVersion !== 1 || !record(slot.states) || !stateName(slot.defaultState)) throw new Error('Invalid state set.');
     const names = Object.keys(slot.states);
     if (names.length < 2 || names.length > 16 || names.some(name => !stateName(name)) || !Object.hasOwn(slot.states, slot.defaultState)) throw new Error('Invalid state declarations.');
-    for (const value of Object.values(slot.states)) validateDescriptor(value, Number(slot.width), Number(slot.height), config, payload.renditionSchemaVersion);
-    const maximumBytes = Object.values(slot.states).reduce((sum: number, value) => {
-      const descriptor = value as { bytes: number; renditions?: { bytes: number }[] };
-      return sum + Math.max(descriptor.bytes, ...(descriptor.renditions ?? []).map(item => item.bytes));
-    }, 0);
-    if (maximumBytes > 50 * 1024 * 1024) throw new Error('State set exceeds the complete-group byte budget.');
+    validateStateImages(slot.states, slot, config, payload.renditionSchemaVersion);
     const fallback = slot.states[slot.defaultState] as Record<string, unknown>;
     if (fallback.assetId !== slot.assetId || fallback.sha256 !== slot.sha256 || fallback.bytes !== slot.bytes || fallback.mime !== slot.mime || fallback.url !== slot.url) throw new Error('Legacy artwork must match the default state.');
+    validateCells(slot, payload, config);
   }
 }
 

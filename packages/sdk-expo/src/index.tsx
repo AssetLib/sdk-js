@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useColorScheme } from 'react-native';
 import { Image, type ImageProps } from 'expo-image';
 import { createAssetClient, parsePublicConfig, resolveAccessibilityDescription, type AssetAccessibility, type AssetClient, type AssetlibConfig, type AssetRef, type AssetStatus, type CachePolicy, type DynamicAssetRef, type ResolvedAsset, type StateSetRef } from '@assetlib/sdk-core';
 import { createPlatformStorage, imageUri, platformFetch, vectorRenderingSupported } from './platform';
@@ -20,14 +21,22 @@ type DeliveryImageProps = Omit<ImageProps, 'source' | 'cachePolicy'> & {
   pixelHeight?: number;
   /** Assetlib retention policy. The renderer's independent cache stays disabled. */
   cachePolicy?: CachePolicy;
+  /** Follow the system appearance by default; an unknown system appearance means no preference. */
+  appearance?: 'light' | 'dark' | 'system';
   /** Opt in per usage. Native accessibilityLabel remains an explicit app override. */
   accessibilityMode?: 'description' | 'decorative';
   accessibilityLocale?: string;
   onStatus?: (status: AssetStatus) => void;
 };
-export type AssetlibImageProps = DeliveryImageProps & { asset: AssetRef; fallback: ImageSource; fallbackAccessibility?: AssetAccessibility };
-export type AssetlibDynamicImageProps = DeliveryImageProps & { asset: DynamicAssetRef; fallback: ImageSource; fallbackAccessibility?: AssetAccessibility };
-export type AssetlibStateImageProps = DeliveryImageProps & { asset: StateSetRef; state: string; fallbacks: Readonly<Record<string, ImageSource>>; fallbackAccessibility?: Readonly<Record<string, AssetAccessibility>> };
+export type AssetlibImageProps = DeliveryImageProps & { asset: AssetRef; fallback: ImageSource; fallbackDark?: ImageSource; fallbackAccessibility?: AssetAccessibility };
+export type AssetlibDynamicImageProps = DeliveryImageProps & { asset: DynamicAssetRef; fallback: ImageSource; fallbackDark?: ImageSource; fallbackAccessibility?: AssetAccessibility };
+export type AssetlibStateImageProps = DeliveryImageProps & { asset: StateSetRef; state: string; fallbacks: Readonly<Record<string, ImageSource>>; fallbacksDark?: Readonly<Record<string, ImageSource>>; fallbackAccessibility?: Readonly<Record<string, AssetAccessibility>> };
+
+function useEffectiveAppearance(appearance: 'light' | 'dark' | 'system') {
+  const systemAppearance = useColorScheme();
+  if (appearance !== 'system') return appearance;
+  return systemAppearance === 'light' || systemAppearance === 'dark' ? systemAppearance : undefined;
+}
 
 const bundled = (message: string): AssetStatus => ({ source: 'bundle', sequence: null, message });
 function assetStatus(result: ResolvedAsset): AssetStatus {
@@ -87,32 +96,36 @@ function useResolvedImage(client: AssetClient, request: object, resolve: (signal
   };
 }
 
-export function AssetlibImage({ client, asset, fallback, fallbackAccessibility = asset.bundledAccessibility, accessibilityMode, accessibilityLocale, revision = 0, pixelWidth, pixelHeight, cachePolicy, onStatus, onError, ...props }: AssetlibImageProps) {
+export function AssetlibImage({ client, asset, fallback, fallbackDark, appearance = 'system', fallbackAccessibility = asset.bundledAccessibility, accessibilityMode, accessibilityLocale, revision = 0, pixelWidth, pixelHeight, cachePolicy, onStatus, onError, ...props }: AssetlibImageProps) {
+  const effectiveAppearance = useEffectiveAppearance(appearance);
   const requireDescription = accessibilityMode === 'description' && props.accessibilityLabel == null;
-  const request = useMemo(() => ({}), [client, asset.key, asset.width, asset.height, revision, pixelWidth, pixelHeight, cachePolicy, requireDescription]);
-  const image = useResolvedImage(client, request, signal => client.resolve(asset, { pixelWidth, pixelHeight, cachePolicy, signal }), fallback, fallbackAccessibility, requireDescription, onStatus);
+  const request = useMemo(() => ({}), [client, asset.key, asset.width, asset.height, revision, pixelWidth, pixelHeight, cachePolicy, requireDescription, effectiveAppearance]);
+  const image = useResolvedImage(client, request, signal => client.resolve(asset, { pixelWidth, pixelHeight, cachePolicy, appearance: effectiveAppearance, signal }), effectiveAppearance === 'dark' ? fallbackDark ?? fallback : fallback, fallbackAccessibility, requireDescription, onStatus);
   return <Image {...props} {...accessibilityProps(props, accessibilityMode, image.accessibility, accessibilityLocale)} cachePolicy="none" source={image.source} onError={event => { image.fail(); onError?.(event); }} />;
 }
 
 /** Runtime references come from this client's verified collection page, never from an arbitrary URL. */
-export function AssetlibDynamicImage({ client, asset, fallback, fallbackAccessibility, accessibilityMode, accessibilityLocale, revision = 0, pixelWidth, pixelHeight, cachePolicy, onStatus, onError, ...props }: AssetlibDynamicImageProps) {
+export function AssetlibDynamicImage({ client, asset, fallback, fallbackDark, appearance = 'system', fallbackAccessibility, accessibilityMode, accessibilityLocale, revision = 0, pixelWidth, pixelHeight, cachePolicy, onStatus, onError, ...props }: AssetlibDynamicImageProps) {
+  const effectiveAppearance = useEffectiveAppearance(appearance);
   const requireDescription = accessibilityMode === 'description' && props.accessibilityLabel == null;
-  const request = useMemo(() => ({}), [client, asset, revision, pixelWidth, pixelHeight, cachePolicy, requireDescription]);
-  const image = useResolvedImage(client, request, signal => client.resolveAsset(asset, { pixelWidth, pixelHeight, cachePolicy, signal }), fallback, fallbackAccessibility, requireDescription, onStatus);
+  const request = useMemo(() => ({}), [client, asset, revision, pixelWidth, pixelHeight, cachePolicy, requireDescription, effectiveAppearance]);
+  const image = useResolvedImage(client, request, signal => client.resolveAsset(asset, { pixelWidth, pixelHeight, cachePolicy, appearance: effectiveAppearance, signal }), effectiveAppearance === 'dark' ? fallbackDark ?? fallback : fallback, fallbackAccessibility, requireDescription, onStatus);
   return <Image {...props} {...accessibilityProps(props, accessibilityMode, image.accessibility, accessibilityLocale)} recyclingKey={props.recyclingKey ?? `${asset.assetId}:${asset.sequence}`} cachePolicy="none" source={image.source} onError={event => { image.fail(); onError?.(event); }} />;
 }
 
 /** Resolves a complete visual family once. Changing only `state` selects the pinned result. */
-export function AssetlibStateImage({ client, asset, state, fallbacks, fallbackAccessibility = asset.bundledStateAccessibility, accessibilityMode, accessibilityLocale, revision = 0, pixelWidth, pixelHeight, cachePolicy, onStatus, onError, ...props }: AssetlibStateImageProps) {
+export function AssetlibStateImage({ client, asset, state, fallbacks, fallbacksDark, appearance = 'system', fallbackAccessibility = asset.bundledStateAccessibility, accessibilityMode, accessibilityLocale, revision = 0, pixelWidth, pixelHeight, cachePolicy, onStatus, onError, ...props }: AssetlibStateImageProps) {
+  const effectiveAppearance = useEffectiveAppearance(appearance);
   const statesKey = JSON.stringify(asset.states);
   const requireDescription = accessibilityMode === 'description' && props.accessibilityLabel == null;
-  const request = useMemo(() => ({}), [client, asset.key, asset.width, asset.height, statesKey, revision, pixelWidth, pixelHeight, cachePolicy, requireDescription]);
+  const request = useMemo(() => ({}), [client, asset.key, asset.width, asset.height, statesKey, revision, pixelWidth, pixelHeight, cachePolicy, requireDescription, effectiveAppearance]);
   const [resolved, setResolved] = useState<{ request: object; images: Record<string, ImageUri>; accessibility: Record<string, AssetAccessibility | undefined> } | null>(null);
   const callbacks = useRef({ onStatus });
   callbacks.current = { onStatus };
   const currentUris = useRef<Record<string, ImageUri> | null>(null);
   if (!asset.states.includes(state)) throw new Error(`Unknown artwork state: ${state}.`);
   if (asset.states.some(name => !Object.prototype.hasOwnProperty.call(fallbacks, name) || fallbacks[name] == null)) throw new Error('Every artwork state requires its own bundled fallback.');
+  if (fallbacksDark && asset.states.some(name => !Object.prototype.hasOwnProperty.call(fallbacksDark, name) || fallbacksDark[name] == null)) throw new Error('Every artwork state requires its own dark bundled fallback when fallbacksDark is supplied.');
   useEffect(() => {
     const controller = new AbortController();
     const images: Record<string, ImageUri> = Object.create(null);
@@ -120,7 +133,7 @@ export function AssetlibStateImage({ client, asset, state, fallbacks, fallbackAc
     const release = () => { for (const image of Object.values(images)) image.release(); };
     setResolved(null);
     callbacks.current.onStatus?.(bundled('Bundled states are ready while the complete artwork set resolves.'));
-    client.resolveStateSet(asset, { pixelWidth, pixelHeight, cachePolicy, signal: controller.signal }).then(async result => {
+    client.resolveStateSet(asset, { pixelWidth, pixelHeight, cachePolicy, appearance: effectiveAppearance, signal: controller.signal }).then(async result => {
       if (controller.signal.aborted) return;
       if (result.source === 'bundle') {
         callbacks.current.onStatus?.(bundled(result.message));
@@ -153,7 +166,8 @@ export function AssetlibStateImage({ client, asset, state, fallbacks, fallbackAc
   }, [client, request]);
   const selected = resolved?.request === request ? resolved.images[state] : null;
   const metadata = selected ? resolved!.accessibility[state] : fallbackAccessibility?.[state];
-  return <Image {...props} {...accessibilityProps(props, accessibilityMode, metadata, accessibilityLocale)} cachePolicy="none" source={selected ? { uri: selected.uri } : fallbacks[state]} onError={event => {
+  const fallback = (effectiveAppearance === 'dark' ? fallbacksDark ?? fallbacks : fallbacks)[state];
+  return <Image {...props} {...accessibilityProps(props, accessibilityMode, metadata, accessibilityLocale)} cachePolicy="none" source={selected ? { uri: selected.uri } : fallback} onError={event => {
     // A decode failure returns the entire family to bundled artwork for this session.
     setResolved(null);
     if (currentUris.current) for (const image of Object.values(currentUris.current)) image.release();

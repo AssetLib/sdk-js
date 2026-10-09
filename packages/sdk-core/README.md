@@ -67,6 +67,19 @@ node node_modules/@assetlib/sdk-core/bin/codegen.mjs assetlib.catalog.json > src
 
 Use `AppAssets.Travel.coast` in application code. Existing compatible artwork updates do not require regenerating this catalog. Adding a new application placement does. Schema v1 identifies placements by key and exact width/height; stable placement IDs and separately versioned contracts are not implemented yet. Renaming a key requires a coordinated migration, not simply renaming it in the console.
 
+## Appearance variants
+
+A catalog placement can declare `"variants": { "appearance": ["dark"] }` (or `light`, or both). Code generation preserves this declaration on `AssetRef` and `StateSetRef`; `assetlib sync` includes it in build registration. Only the `appearance` axis is supported, with one or two unique `light`/`dark` values.
+
+```ts
+const image = await client.resolve(AppAssets.Travel.coast, { appearance: 'dark' });
+const family = await client.resolveStateSet(AppAssets.Tasks.garden, { appearance: 'dark' });
+```
+
+Signed manifests declare `variantSchemaVersion: 1` and provide each placement's `variants` and bound `cells`. Resolution selects the requested appearance cell if present, otherwise the placement's existing Any image. Omitting `appearance` selects Any. Each stateful cell must contain the entire declared state family; states are never borrowed from another appearance. Descriptions and renditions come from the selected cell itself.
+
+Image cache keys include the requested appearance, and retained releases use the same selection rule when providing cached fallback. `ResolvedAsset.sha256` remains the content hash; `cacheKey`, when present, identifies the storage entry. Custom adapters that open cached files should use `cacheKey ?? sha256`. Existing manifests remain supported. `resolveAnimation` continues to use Any, and asset-page payloads remain unchanged.
+
 ## Select only the user's assigned catalog entries
 
 The host backend determines card ownership/assignment. Match its artwork keys against references checked into the application, then resolve only those references:

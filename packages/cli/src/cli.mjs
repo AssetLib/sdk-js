@@ -4,6 +4,7 @@ import { catalogHash, readCatalog } from './catalog.mjs';
 import { generateCatalog } from './codegen.mjs';
 import { detectBuildMetadata } from './detection.mjs';
 import { scanReferences } from './references.mjs';
+import { adopt, formatAdoption } from './adopt.mjs';
 
 const HELP = `Usage:
   assetlib sync --catalog <path> --platform <ios|android|web|expo> --app-version <v> --build-number <n>
@@ -11,33 +12,36 @@ const HELP = `Usage:
     [--sdk-version <v>] [--dry-run] [--json]
   assetlib hash --catalog <path>
   assetlib check --catalog <path> --generated <path>
+  assetlib adopt --catalog <path> --src <dir> [--src <dir>]...
+    [--generated <path>] [--client-import "<module>#<export>"] [--min-edge <px>] [--apply] [--json]
 
 ASSETLIB_TOKEN supplies the sync token; ASSETLIB_CONSOLE, ASSETLIB_ORG, and ASSETLIB_APP supply defaults.
-Exit codes: 0 success, 1 error or generated-file mismatch, 2 partial reference scan.
+Exit codes: 0 success, 1 error or generated-file mismatch, 2 partial reference scan, 3 nothing to adopt.
 `;
 const optionsByCommand = {
   sync: ['catalog', 'platform', 'app-version', 'build-number', 'references', 'root', 'console', 'org', 'app', 'sdk-version', 'dry-run', 'json'],
   hash: ['catalog'],
   check: ['catalog', 'generated'],
+  adopt: ['catalog', 'src', 'generated', 'client-import', 'min-edge', 'apply', 'json'],
 };
 
 function parseArgs(args) {
   const [command, ...rest] = args;
-  if (!optionsByCommand[command]) throw new Error('Expected sync, hash, or check. Use --help.');
-  const options = { references: [] };
+  if (!optionsByCommand[command]) throw new Error('Expected sync, hash, check, or adopt. Use --help.');
+  const options = { references: [], src: [] };
   for (let i = 0; i < rest.length; i++) {
     const match = /^--([^=]+)(?:=(.*))?$/.exec(rest[i]);
     if (!match || !optionsByCommand[command].includes(match[1])) throw new Error('Unknown option. Use --help. Token flags are not supported.');
     const [, name, inline] = match;
-    if (name !== 'references' && Object.hasOwn(options, name)) throw new Error(`Duplicate --${name} option.`);
-    if (['dry-run', 'json'].includes(name)) {
+    if (!['references', 'src'].includes(name) && Object.hasOwn(options, name)) throw new Error(`Duplicate --${name} option.`);
+    if (['dry-run', 'apply', 'json'].includes(name)) {
       if (inline !== undefined) throw new Error(`--${name} does not take a value.`);
       options[name] = true;
       continue;
     }
     const value = inline ?? rest[++i];
     if (!value || value.startsWith('--')) throw new Error(`--${name} requires a value.`);
-    if (name === 'references') options.references.push(value);
+    if (['references', 'src'].includes(name)) options[name].push(value);
     else options[name] = value;
   }
   for (const name of ['catalog', ...(command === 'sync' ? ['platform', 'app-version', 'build-number'] : command === 'check' ? ['generated'] : [])]) {
@@ -117,6 +121,12 @@ export async function main(args = process.argv.slice(2), env = process.env, io =
     const { command, options } = parseArgs(args);
     const catalogPath = path.resolve(options.catalog);
     const catalog = await readCatalog(catalogPath);
+    if (command === 'adopt') {
+      const report = await adopt({ catalogPath, catalog, src: options.src, generated: options.generated, clientImport: options['client-import'], minEdge: options['min-edge'] === undefined ? 64 : Number(options['min-edge']), apply: options.apply });
+      if (options.json) json(report);
+      else write(formatAdoption(report));
+      return report.summary.candidates ? 0 : 3;
+    }
     if (command === 'hash') { write(catalogHash(catalog) + '\n'); return 0; }
     if (command === 'check') {
       const current = await readFile(path.resolve(options.generated), 'utf8');

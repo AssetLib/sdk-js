@@ -77,6 +77,13 @@ export function verifySignedManifest(input: unknown, config: AssetlibConfig): { 
 
 const throwIfAborted = (signal?: AbortSignal): void => { if (signal?.aborted) throw new Error('Assetlib request cancelled.'); };
 const cachePolicy = (policy: unknown): CachePolicy => { if (policy !== 'disk' && policy !== 'memory' && policy !== 'none') throw new Error('Unknown image cache policy.'); return policy; };
+const validateAppearance = (appearance: unknown): void => { if (appearance !== undefined && appearance !== 'light' && appearance !== 'dark') throw new Error('Unknown artwork appearance.'); };
+
+function appearanceSlot(slot: ManifestSlot, appearance: ResolveOptions['appearance']): ManifestSlot {
+  const cell = slot.cells?.find(value => value.appearance === appearance);
+  // Project a fresh descriptor so an absent rendition or description never leaks from Any.
+  return cell ? { ...cell, key: slot.key, screen: slot.screen, width: slot.width, height: slot.height } : slot;
+}
 
 async function fetchBounded(fetcher: typeof fetch, url: string, maxBytes: number, timeoutMs: number, accept = 'image/webp', signal?: AbortSignal, noStore = false): Promise<Uint8Array> {
   throwIfAborted(signal);
@@ -234,23 +241,26 @@ export class AssetClient {
   }
   clearMemoryCache(): void { this.memory.clear(); }
   private async resolveDescriptor(slot: ManifestSlot, sequence: number, download: boolean, options: ResolveOptions): Promise<ResolvedAsset> {
+    validateAppearance(options.appearance);
     const policy = cachePolicy(options.cachePolicy ?? this.policy);
     const target = targetPixels(slot, options);
     let message = 'No compatible image bytes are available.';
     for (const candidate of selectAssetCandidates(slot, target, this.formats)) {
       throwIfAborted(options.signal);
-      const identity = { mime: candidate.mime, sha256: candidate.sha256, assetId: slot.assetId, cachePolicy: policy,
+      // Storage keys remain 64-hex values while separating requested appearances.
+      const cacheKey = options.appearance === undefined ? candidate.sha256 : hashBytes(utf8ToBytes(`appearance:${options.appearance}:${candidate.sha256}`));
+      const identity = { mime: candidate.mime, sha256: candidate.sha256, cacheKey, assetId: slot.assetId, cachePolicy: policy,
         ...(slot.accessibility ? { accessibility: Object.freeze({ defaultLocale: slot.accessibility.defaultLocale, descriptions: Object.freeze({ ...slot.accessibility.descriptions }) }) } : {}),
         ...(candidate.isRendition ? { pixelWidth: candidate.width, pixelHeight: candidate.height } : {}) };
       try {
-        const cached = await this.cached(candidate.sha256, policy);
+        const cached = await this.cached(cacheKey, policy);
         throwIfAborted(options.signal);
         if (cached && this.validBytes(cached, candidate)) return { source: 'cache', sequence, message: 'Verified artwork loaded from cache.', bytes: cached, ...identity };
         if (!download) continue;
         const bytes = await this.withTransfer(() => fetchBounded(this.fetcher, new URL(candidate.url, this.config.manifestUrl).href, candidate.bytes, this.timeoutMs, candidate.mime, options.signal, policy !== 'disk'), options.signal);
         throwIfAborted(options.signal);
         if (!this.validBytes(bytes, candidate)) throw new Error('Asset bytes do not match the signed descriptor.');
-        await this.retain(candidate.sha256, bytes, candidate.mime, policy);
+        await this.retain(cacheKey, bytes, candidate.mime, policy);
         throwIfAborted(options.signal);
         return { source: 'remote', sequence, message: 'Downloaded and verified artwork.', bytes, ...identity };
       } catch (error) { throwIfAborted(options.signal); message = error instanceof Error ? error.message : 'Artwork could not be loaded.'; }
@@ -260,13 +270,14 @@ export class AssetClient {
   async resolve(ref: AssetRef, options: ResolveOptions = {}): Promise<ResolvedAsset> {
     if (!validKey(ref.key) || !integer(ref.width, 1, 8192) || !integer(ref.height, 1, 8192)) throw new Error('Invalid generated asset reference.');
     if (ref.bundledAccessibility !== undefined) validateAccessibility(ref.bundledAccessibility);
+    validateAppearance(options.appearance);
     targetPixels(ref, options); cachePolicy(options.cachePolicy ?? this.policy); throwIfAborted(options.signal);
     const history = await this.snapshot();
     let message = this.storageFailure ?? 'No compatible published artwork is available.';
     for (const [index, { payload }] of history.entries()) {
       const slot = payload.slots.find(item => item.key === ref.key && item.width === ref.width && item.height === ref.height);
       if (!slot) continue;
-      const result = await this.resolveDescriptor(slot, payload.sequence, index === 0, options);
+      const result = await this.resolveDescriptor(appearanceSlot(slot, options.appearance), payload.sequence, index === 0, options);
       if (result.source !== 'bundle') return index ? { ...result, message: `Using verified artwork from release ${payload.sequence}. ${message}` } : result;
       message = result.message;
     }
@@ -275,14 +286,16 @@ export class AssetClient {
   }
   async resolveStateSet(ref: StateSetRef, options: ResolveOptions = {}): Promise<ResolvedStateSet> {
     if (!validKey(ref.key) || !integer(ref.width, 1, 8192) || !integer(ref.height, 1, 8192) || !validStateRef(ref.states)) throw new Error('Invalid state set reference.');
+    validateAppearance(options.appearance);
     targetPixels(ref, options); cachePolicy(options.cachePolicy ?? this.policy); throwIfAborted(options.signal);
     const history = await this.snapshot();
     for (const [index, { payload }] of history.entries()) {
-      const slot = payload.slots.find(item => item.key === ref.key && item.width === ref.width && item.height === ref.height);
+      const placement = payload.slots.find(item => item.key === ref.key && item.width === ref.width && item.height === ref.height);
+      const slot = placement && appearanceSlot(placement, options.appearance);
       if (!slot?.states || Object.keys(slot.states).length !== ref.states.length || ref.states.some(name => !Object.hasOwn(slot.states!, name))) continue;
       const entries = await Promise.all(ref.states.map(async name => {
         // Optional metadata and renditions belong to this state, never to the default image.
-        const result = await this.resolveDescriptor({ key: slot.key, screen: slot.screen, width: slot.width, height: slot.height, ...slot.states![name] }, payload.sequence, index === 0, options);
+        const result = await this.resolveDescriptor({ ...slot.states![name], key: slot.key, screen: slot.screen, width: slot.width, height: slot.height }, payload.sequence, index === 0, options);
         return [name, result] as const;
       }));
       throwIfAborted(options.signal);

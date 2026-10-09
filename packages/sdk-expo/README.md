@@ -38,6 +38,24 @@ Create a long-lived client outside repeated renders. After an explicit `refresh(
 
 `onStatus` reports source selection and verification, not a user impression or proof that the image was visible. Do not send experiment exposure events from this callback. App layout, accessibility labels, image sizing, and refresh policy remain app-owned. Rendering uses `expo-image` for downloaded PNG/WebP support on iOS and Android; props follow Expo Image except `cachePolicy`, which controls Assetlib's verified byte retention. The renderer's independent cache is always disabled. Pending resolution is cancelled when a component unmounts or changes its asset request.
 
+## Appearance variants
+
+Declare `"variants": { "appearance": ["dark"] }` on a checked-in catalog placement and regenerate its reference to enable a dark cell. `AssetlibImage`, `AssetlibStateImage`, and `AssetlibDynamicImage` accept `appearance="light"`, `"dark"`, or `"system"` (the default). System mode reads React Native's `useColorScheme()`; a null scheme sends no appearance preference. A change in the effective appearance cancels the previous request and resolves again automatically.
+
+```tsx
+<AssetlibImage
+  client={client}
+  asset={AppAssets.Travel.coast}
+  fallback={require('./assets/coast.png')}
+  fallbackDark={require('./assets/coast-dark.png')}
+  appearance="system"
+/>
+```
+
+Published placements resolve the requested appearance cell when bound, or inherit the placement's Any image. Stateful placements select one complete appearance family; individual states never borrow across appearances. `fallbackDark` is optional on image and dynamic-image components. State images accept an optional `fallbacksDark` map containing every declared state. Dark mode uses that complete bundle when supplied; otherwise it uses the existing `fallback` or `fallbacks`. Bundled accessibility metadata remains app-owned: provide descriptions suitable for the displayed fallback.
+
+Dynamic collection payloads have no appearance cells, so their verified image stays the same while their bundled placeholder can follow appearance. Animations continue using the Any cell. Appearance-scoped cache keys isolate light, dark, and no-preference image requests, including historical cache fallback.
+
 ## Accessibility per usage
 
 Choose how each use of an image should behave. Descriptive images can opt into the localized metadata that matches the displayed artwork:
@@ -88,7 +106,7 @@ const garden = {
 />
 ```
 
-The component prepares the complete verified family before showing it. Changing only `state` selects from the pinned family without downloading again. A changed client, state-set contract, `revision`, pixel target, or cache policy starts a new resolution. If preparing or displaying a member fails, the entire family uses its matching bundled states until the next resolution. It never substitutes another growth state for a missing one. App code is responsible for supplying a valid declared state.
+The component prepares the complete verified family before showing it. Changing only `state` selects from the pinned family without downloading again. A changed client, state-set contract, `revision`, pixel target, cache policy, or effective appearance starts a new resolution. If preparing or displaying a member fails, the entire family uses its matching bundled states until the next resolution. It never substitutes another growth state for a missing one. App code is responsible for supplying a valid declared state.
 
 ## Dynamic collections and retention
 

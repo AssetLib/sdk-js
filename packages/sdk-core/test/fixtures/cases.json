@@ -419,6 +419,31 @@
       "file": "manifests/invalid/accessibility-too-many-locales.json",
       "verification": "reject",
       "reason": "Malformed optional accessibility metadata: too-many-locales."
+    },
+    {
+      "file": "manifests/valid-appearance-seq7.json",
+      "verification": "accept",
+      "reason": "Declared dark cell overrides Any; unbound light inherits Any."
+    },
+    {
+      "file": "manifests/valid-appearance-stateful-seq8.json",
+      "verification": "accept",
+      "reason": "Complete dark state family with duplicated default state and unchanged Any family."
+    },
+    {
+      "file": "manifests/invalid/appearance-undeclared-cell.json",
+      "verification": "reject",
+      "reason": "A bound cell must use a declared appearance."
+    },
+    {
+      "file": "manifests/invalid/appearance-incomplete-family.json",
+      "verification": "reject",
+      "reason": "A bound stateful appearance must contain every state."
+    },
+    {
+      "file": "manifests/invalid/appearance-version.json",
+      "verification": "reject",
+      "reason": "Unknown variant schema version is rejected."
     }
   ],
   "stateful": [

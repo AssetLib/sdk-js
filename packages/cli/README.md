@@ -1,6 +1,6 @@
 # @assetlib/cli
 
-Register a checked-in Assetlib catalog with the console from an application build. Node.js 22 or newer; no runtime dependencies.
+Register a checked-in Assetlib catalog with the console from an application build, or adopt bundled Expo images into declared placements. Node.js 22 or newer. The CLI pins `typescript` 5.9.3 for AST parsing and `image-size` 2.0.4 for encoded image dimensions.
 
 ## Install
 
@@ -42,7 +42,67 @@ assetlib check --catalog assetlib.catalog.json --generated src/assets.generated.
 assetlib-codegen assetlib.catalog.json > src/assets.generated.ts
 ```
 
-The CLI copies the existing core codegen and accessibility validation to remain standalone without dependencies. A parity test compares its output to `packages/sdk-core/bin/codegen.mjs`; update the copy when the generator changes. Registration additionally rejects a supplied `defaultState` that is not one of the declared states. Catalog files are limited to 128 KiB and requests to 256 KiB.
+The CLI copies the existing core codegen and accessibility validation to remain standalone without an SDK runtime dependency. A parity test compares its output to `packages/sdk-core/bin/codegen.mjs`; update the copy when the generator changes. Registration additionally rejects a supplied `defaultState` that is not one of the declared states. Catalog files are limited to 128 KiB and requests to 256 KiB. Optional `variants: { appearance: ['light', 'dark'] }` declarations pass through generation and sync. Appearance arrays must be nonempty, unique, and contain only `light` or `dark`; unknown axes are rejected.
+
+## Adopt Expo image call sites
+
+Start with a valid checked-in catalog and review the dry run:
+
+```sh
+assetlib adopt --catalog assetlib.catalog.json --src src
+
+assetlib adopt --catalog assetlib.catalog.json --src src --src app \
+  --generated src/assets.generated.ts \
+  --client-import './src/assetlib/client#client' --min-edge 64 --json
+
+# Only after reviewing the plan:
+assetlib adopt --catalog assetlib.catalog.json --src src --apply
+```
+
+The default is read-only: it prints candidate, skipped, and collision counts plus a unified diff for **every** planned file, including generated output and a missing client stub. `--json` returns that same plan as JSON (`summary`, `candidates`, `skipped`, `collisions`, `issues`, `files[].diff`, and `notes`). `--apply` validates the whole plan and checks for concurrent file changes before writing it. Exit 0 means at least one call site was adopted or could be adopted; exit 3 means nothing new was found. A second run after applying reports nothing new. Scan limits and unreadable files are reported in `issues`; review them even when candidates were found.
+
+The TypeScript compiler API parses `.tsx`, `.jsx`, `.ts`, and `.js` with JSX enabled. Two patterns are supported, when the JSX tag is the named `Image` import from `react-native` or `expo-image`:
+
+```tsx
+import { Image } from 'react-native';
+const hero = require('../assets/coast-hero.png');
+
+<Image source={require('../assets/coast-hero.png')} style={styles.hero} />
+<Image source={hero} style={styles.hero} />
+```
+
+The second pattern requires a module-level `const` with exactly one use in that file. Exported constants are supported and remain exported. Lexical shadowing, shorthand properties, and export references are included in use analysis. Existing `AssetlibImage` fallback expressions are already adopted. Replacements preserve every other attribute and all surrounding source formatting using AST positions:
+
+```tsx
+<AssetlibImage client={client} asset={AppAssets.Travel.coastHero}
+  fallback={require('../assets/coast-hero.png')} style={styles.hero} />
+```
+
+For identifier sources, `fallback={hero}` and the original constant are retained. The original `Image` import is retained even if unused. Imports for `AssetlibImage`, `AppAssets`, and the client are reused where possible or added with collision-safe aliases; directives such as `'use client'` remain first.
+
+`TravelScreen.tsx` and `coast-hero.png` become key `travel.coast-hero`, symbol `['Travel', 'coastHero']`, and screen `travel`. A matching existing key with the same dimensions reuses its existing symbol. Different dimensions are a conflict and are skipped. Distinct images that collide on a key or symbol receive `-2`, `-3`, and corresponding identifier suffixes, reported in the plan; repeat uses of the same image and key share a placement. Invalid names, dimensions outside 1–8192, and additions beyond the catalog's 100-placement limit are skipped. Existing catalog entries are preserved, JSON is formatted with two spaces, and the CLI generator refreshes the generated file.
+
+`--generated` defaults to `src/assets.generated.ts` relative to the catalog directory. An explicit `--generated`, `--catalog`, or `--src` resolves from the working directory. `--client-import` defaults to `./src/assetlib/client#client`; its relative module path resolves from the catalog directory, then each source receives the appropriate relative import. Use `#default` for a default export, or a valid named binding. A missing local client gets a commented starter module on `--apply`, importing `createExpoAssetClient` and `parsePublicConfig` and reading `assetlib.public.json`. The dry-run diff includes this module. Existing client modules are never overwritten. A bare package import such as `@example/client#client` is accepted and assumes the package already supplies that export; the CLI does not scaffold packages.
+
+Skipped image requires include the following reasons, each with `path:line`:
+
+| Reason | Meaning |
+| --- | --- |
+| `object-property`, `array-element` | Require or identifier appears in an object or array rather than directly in `source`. |
+| `template-string`, `dynamic-path` | The require argument is a template or computed expression. |
+| `conditional-expression`, `non-jsx-call`, `unsupported-source` | Conditional, helper-call, or other unsupported source expression. |
+| `multiple-uses`, `unused-identifier`, `non-module-const` | The constant pattern cannot be established unambiguously. |
+| `image-not-imported`, `shadowed-require`, `attribute-conflict` | The tag or require is locally shadowed/unsupported, or replacement would conflict with existing props. |
+| `icon-sized` | Both encoded edges are below `--min-edge` (default 64; allowed 1–8192). |
+| `essential` | Basename contains `icon`, `splash`, or `adaptive-icon`, or an ancestor directory is named `icons`. |
+| `image-missing`, `dimensions-unavailable` | File is absent or its supported image dimensions cannot be read. |
+| `catalog-dimension-conflict`, `invalid-catalog-name-or-dimensions`, `placement-limit` | The placement cannot be appended or safely reused under catalog rules. |
+| `non-relative-path`, `image-outside-root`, `symlink-or-outside-root` | The image cannot be read inside the supported local scope. |
+| `unreadable-or-byte-limit`, `file-changed-during-scan` | A safe bounded read could not complete. |
+
+Scope is intentionally local and bounded: source directories, generated output, local client modules, and image files must stay inside the catalog directory. Symlinks are not followed. Hidden entries, generated sources, and the same dependency/build directories listed under References below are excluded. Limits are 32 directory levels per selected source root, 20,000 entries, 500 source files, 256 KiB per source file, 2 MiB total source bytes, 32 MiB per image, and 128 MiB total image bytes. Overlapping source roots are scanned once. Parse failures and truncated scans appear as scan issues.
+
+Dimensions are the encoded pixel dimensions, not React Native layout dimensions. **Check `@2x` and `@3x` sources** before accepting them as placement canvases. Before committing, review every diff, configure the client with the correct public SDK config, ensure the SDK packages are installed, and run the app's typecheck and visual checks. In particular, review retained platform-specific image props for compatibility with `AssetlibImage`. Adoption never calls Git, commits or stashes, sends a network request, uploads an image, deletes or rewrites image bytes, changes app configuration, removes the original `Image` import or constant, or performs unsupported rewrites.
 
 ## Environment variables
 
@@ -80,9 +140,10 @@ References are deduplicated and selected in sorted POSIX path order, up to 200 t
 | `0` | Completed successfully within the selected scope. |
 | `1` | Invalid arguments/catalog, stale generated file, network failure, rejected server response, or HTTP error. HTTP errors include the server message. |
 | `2` | Completed with a partial reference scan; inspect stderr for limits or unreadable paths. |
+| `3` | `adopt` found no new supported call sites. No files changed. |
 
 A request error takes precedence over the partial-scan exit code. Re-registering the same platform, app version, and build number replaces that build's declarations and references; created, existing, and conflicting placements are summarized. Conflicts are reported without changing the exit code by themselves.
 
 ## Verification
 
-Run `npm run verify` from the repository root. Tests include the shared hash vector, core-codegen parity, scanner limits, CI metadata, dry-run, generated-file checks, and real local `node:http` servers for registration and error responses. These HTTP tests require permission to listen on loopback; a sandbox that blocks listening reports failures rather than silently skipping them.
+Run `npm run verify` from the repository root. Tests include the shared hash vector, core-codegen parity, scanner limits, CI metadata, dry-run, generated-file checks, AST adoption and skip reasons, collision/reuse cases, diff replay, read-only snapshots, apply/idempotence, and real local `node:http` servers for registration and error responses. These HTTP tests require permission to listen on loopback; a sandbox that blocks listening reports failures rather than silently skipping them.
