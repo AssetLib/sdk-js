@@ -9,6 +9,8 @@ import { create, act } from 'react-test-renderer';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 const root = fileURLToPath(new URL('..', import.meta.url));
+// The default reported SDK version must follow every release bump of this package.
+const packageVersion = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8')).version;
 const temporary = await mkdtemp(path.join(root, 'test/.adapter-'));
 after(async () => { delete globalThis.__assetlibAdapter; await rm(temporary, { recursive: true, force: true }); });
 const transpile = async (name, replacements) => {
@@ -521,7 +523,7 @@ test('telemetry is opt-in, passes explicit metadata through, and needs no option
   assert.equal(lookups, 0, 'explicit metadata avoids optional lookups');
   explicit.dispose();
   const missing = adapter.createExpoAssetClient(config, { telemetry: { enabled: true } });
-  assert.deepEqual(missing.options.telemetry.sdk, { name: 'sdk-expo', version: '0.3.0-preview.1' });
+  assert.deepEqual(missing.options.telemetry.sdk, { name: 'sdk-expo', version: packageVersion });
   assert.deepEqual(missing.options.telemetry.build, { platform: 'expo', appVersion: 'unknown', buildNumber: 'unknown' });
   assert.equal(lookups, 2);
   missing.dispose();

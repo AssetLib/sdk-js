@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { generateKeyPairSync, sign } from 'node:crypto';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
+import { readFile } from 'node:fs/promises';
 import { AssetClient, createMemoryStorage, hashBytes } from '../dist/index.js';
 
 const orgId = '11111111-1111-4111-8111-111111111111';
@@ -13,6 +14,8 @@ const publicKey = pair.publicKey.export({ type: 'spki', format: 'pem' }).toStrin
 const keyId = hashBytes(new TextEncoder().encode(publicKey)).slice(0, 16);
 const ref = { key: 'travel.coast', width: 1200, height: 900 };
 const telemetry = { enabled: true, installId: 'test-install-1234', flushIntervalMs: 60_000 };
+// The default reported SDK version must follow every release bump of this package.
+const packageVersion = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')).version;
 const signed = data => {
   const payload = JSON.stringify(data);
   return { algorithm: 'Ed25519', keyId, publicKey, payload, signature: sign(null, Buffer.from(payload), pair.privateKey).toString('base64') };
@@ -286,7 +289,7 @@ test('default SDK/build metadata and missing, offline, verification and decode f
   h.client.reportDisplay(ref, bundle);
   await h.client.flush();
   const initial = h.bodies[0].body;
-  assert.deepEqual(initial.sdk, { name: 'sdk-core', version: '0.3.0-preview.1' });
+  assert.deepEqual(initial.sdk, { name: 'sdk-core', version: packageVersion });
   assert.deepEqual(initial.build, { platform: 'web', appVersion: 'unknown', buildNumber: 'unknown' });
   assert.equal(initial.events.find(event => event.kind === 'fallback').reason, 'missing');
   assert.equal(initial.events.some(event => event.kind === 'display'), false);
