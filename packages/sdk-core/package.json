@@ -1,6 +1,6 @@
 {
   "name": "@assetlib/sdk-core",
-  "version": "0.3.0-preview.1",
+  "version": "0.4.0-preview.1",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",

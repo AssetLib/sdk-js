@@ -8,7 +8,7 @@ const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const output = path.join(root, 'release');
 await mkdir(output, { recursive: true });
 const sums = [];
-for (const name of ['sdk-core', 'sdk-expo', 'audit']) {
+for (const name of ['sdk-core', 'sdk-expo', 'audit', 'cli']) {
   const result = JSON.parse(execFileSync('npm', ['pack', '--json', '--pack-destination', output], { cwd: path.join(root, 'packages', name), encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] }));
   const pack = result[0];
   const bytes = await readFile(path.join(output, pack.filename));
