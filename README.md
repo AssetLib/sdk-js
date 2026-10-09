@@ -30,7 +30,7 @@ npm install \
 npx expo install expo-file-system expo-image
 ```
 
-The preview targets Expo 57, React Native 0.86, and React 19. Pin the installed versions in your application's lockfile. Check `SHA256SUMS` attached to the release when reviewing downloaded artifacts. The same release attaches the `assetlib` CLI as `assetlib-cli-0.1.0.tgz`; see the [CLI install steps](packages/cli/README.md#install).
+The preview targets Expo 57, React Native 0.86, and React 19. Pin the installed versions in your application's lockfile. Check `SHA256SUMS` attached to the release when reviewing downloaded artifacts. The same release attaches the `assetlib` CLI as `assetlib-cli-0.1.1.tgz`; see the [CLI install steps](packages/cli/README.md#install).
 
 ## Connect one artwork placement
 

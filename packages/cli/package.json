@@ -1,6 +1,6 @@
 {
   "name": "@assetlib/cli",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Register checked-in Assetlib catalogs and bounded code references from application builds.",
   "license": "MIT",
   "type": "module",

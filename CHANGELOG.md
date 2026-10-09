@@ -2,6 +2,7 @@
 
 ## 0.4.1-preview.1 — October 9, 2026
 
+- `@assetlib/cli` 0.1.1: the README now installs the CLI from the release tarball instead of npm, where it is not published. No code change from 0.1.0.
 - Public configuration now accepts raw JSON strings and enforces a 4096-byte UTF-8 limit. Object inputs use their JSON serialization. Unknown fields and JSON whitespace count toward the limit.
 - Configurations with duplicate PEM pins or more than 16 pins are now rejected. Each pin must be an Ed25519 SPKI PEM of at most 256 UTF-8 bytes.
 - Near-limit configurations remain reusable by a client: derived IDs are omitted when adding them would exceed 4096 bytes. Supplied IDs and every trusted pin are preserved.

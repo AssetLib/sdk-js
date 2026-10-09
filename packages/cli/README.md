@@ -4,10 +4,10 @@ Register a checked-in Assetlib catalog with the console from an application buil
 
 ## Install
 
-The CLI is not on the npm registry. Install the exact tarball attached to a GitHub release of this repository; release `v0.4.1-preview.1` ships `@assetlib/cli` 0.1.0:
+The CLI is not on the npm registry. Install the exact tarball attached to a GitHub release of this repository; release `v0.4.1-preview.1` ships `@assetlib/cli` 0.1.1:
 
 ```sh
-npm install --save-dev https://github.com/AssetLib/sdk-js/releases/download/v0.4.1-preview.1/assetlib-cli-0.1.0.tgz
+npm install --save-dev https://github.com/AssetLib/sdk-js/releases/download/v0.4.1-preview.1/assetlib-cli-0.1.1.tgz
 npx assetlib --help
 ```
 
