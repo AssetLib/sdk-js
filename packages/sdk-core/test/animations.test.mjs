@@ -215,7 +215,8 @@ test('failed current animation falls back only to verified historical cache, the
   delivery.state.release = envelope([card1.slot], 3); await client.refresh(); delivery.state.requests = [];
   assert.equal((await client.resolveAnimation(card1.ref)).sequence, 3); assert.equal(delivery.state.requests.length, 0);
   // Persisted manifests without a previously downloaded body do not authorize an old download.
-  const empty = { ...createMemoryStorage(), loadState: () => storage.loadState() };
+  const empty = createMemoryStorage();
+  await empty.saveState(await storage.loadState());
   delivery.state.release = envelope([next.slot], 4);
   const fresh = new AssetClient(config, { storage: empty, fetch: delivery.fetch }); await fresh.refresh(); delivery.state.requests = [];
   assert.equal((await fresh.resolveAnimation(card1.ref)).source, 'poster');

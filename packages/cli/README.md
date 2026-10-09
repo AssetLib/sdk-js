@@ -71,7 +71,7 @@ const hero = require('../assets/coast-hero.png');
 <Image source={hero} style={styles.hero} />
 ```
 
-The second pattern requires a module-level `const` with exactly one use in that file. Exported constants are supported and remain exported. Lexical shadowing, shorthand properties, and export references are included in use analysis. Existing `AssetlibImage` fallback expressions are already adopted. Replacements preserve every other attribute and all surrounding source formatting using AST positions:
+The second pattern requires a module-level `const` with exactly one use in that file. Exported constants are supported and remain exported. Lexical shadowing, shorthand properties, and export references are included in use analysis. Existing `AssetlibImage` fallback expressions are already adopted. Replacements preserve surrounding source formatting using AST positions. Literal Expo `cachePolicy="memory-disk"` becomes `cachePolicy="disk"`; `disk`, `memory`, and `none` retain their values. String literals inside JSX expressions are supported too. Other literals and non-literal expressions are skipped with reason `cache-policy`. Elements with any JSX spread attribute are skipped with reason `spread-attributes`, because the spread may override delivery props. Other attributes are retained:
 
 ```tsx
 <AssetlibImage client={client} asset={AppAssets.Travel.coastHero}
@@ -93,6 +93,8 @@ Skipped image requires include the following reasons, each with `path:line`:
 | `conditional-expression`, `non-jsx-call`, `unsupported-source` | Conditional, helper-call, or other unsupported source expression. |
 | `multiple-uses`, `unused-identifier`, `non-module-const` | The constant pattern cannot be established unambiguously. |
 | `image-not-imported`, `shadowed-require`, `attribute-conflict` | The tag or require is locally shadowed/unsupported, or replacement would conflict with existing props. |
+| `cache-policy` | The cache policy is not a supported string literal, or is duplicated. |
+| `spread-attributes` | A JSX spread could override the rewritten component's delivery props. |
 | `icon-sized` | Both encoded edges are below `--min-edge` (default 64; allowed 1–8192). |
 | `essential` | Basename contains `icon`, `splash`, `adaptive-icon`, `mark`, `logo`, or `brand` (case-insensitive), or an ancestor directory is named `icons`. |
 | `image-missing`, `dimensions-unavailable` | File is absent or its supported image dimensions cannot be read. |
@@ -109,11 +111,11 @@ Dimensions are the encoded pixel dimensions, not React Native layout dimensions.
 | Variable | Purpose |
 | --- | --- |
 | `ASSETLIB_TOKEN` | App API token with `declare` scope. Required only for a real sync. Supply through your shell/CI secret store; there is no token flag. |
-| `ASSETLIB_CONSOLE` | Console HTTP(S) origin, such as `https://console.example.com`. |
+| `ASSETLIB_CONSOLE` | Console HTTPS origin, such as `https://console.example.com`. See the explicit loopback exception below. |
 | `ASSETLIB_ORG` | Organization UUID. |
 | `ASSETLIB_APP` | App UUID. |
 
-`--console`, `--org`, and `--app` override environment defaults. The console must be an origin without a path, credentials, query, or fragment. Sync posts to `/api/apps/{org}/{app}/builds` with Bearer authentication and JSON content type, a 30-second timeout, and no followed redirects. Tokens are never printed, including in echoed server errors. There is no session cookie or stored credential file.
+`--console`, `--org`, and `--app` override environment defaults. The console must use HTTPS and be an origin without a path, credentials, query, or fragment. Local development can use HTTP only for `localhost`, `127.0.0.1`, or `[::1]`, and only when `--allow-insecure-loopback` is explicitly supplied. The flag has no environment-variable equivalent and cannot permit remote HTTP. This validation happens before an authenticated request is constructed. Sync posts to `/api/apps/{org}/{app}/builds` with Bearer authentication and JSON content type, a 30-second timeout, and no followed redirects. Tokens are never printed, including in echoed server errors. There is no session cookie or stored credential file.
 
 VCS/CI metadata is detected in this order:
 

@@ -48,6 +48,85 @@ async function snapshot(root) {
 }
 function syntax(text) { assert.deepEqual(ts.createSourceFile('file.tsx', text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX).parseDiagnostics, []); }
 
+async function typecheckTransformed(f, source) {
+  // Resolve the real Expo adapter and its dependencies, not a replacement prop declaration.
+  const repo = fileURLToPath(new URL('../../../', import.meta.url));
+  await symlink(path.join(repo, 'node_modules'), path.join(f.root, 'node_modules'), 'dir');
+  const program = ts.createProgram([path.join(f.root, source)], {
+    target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext, moduleResolution: ts.ModuleResolutionKind.Bundler,
+    strict: true, jsx: ts.JsxEmit.ReactJSX, skipLibCheck: true, allowImportingTsExtensions: true, noEmit: true,
+    types: ['node', 'react'], typeRoots: [path.join(repo, 'node_modules/@types')],
+  });
+  assert.ok(program.getSourceFiles().some(file => file.fileName.endsWith('/sdk-expo/src/index.tsx')), 'typecheck must load the actual Expo adapter');
+  const diagnostics = ts.getPreEmitDiagnostics(program);
+  assert.deepEqual(diagnostics.map(diagnostic => ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n')), []);
+}
+
+test('adopt translates literal Expo cache policies and the transformed component typechecks against Expo adapter props', async t => {
+  const f = await fixture(t);
+  await f.put('src/assetlib/client.ts', `import type { AssetClient } from '@assetlib/sdk-core';\nexport declare const client: AssetClient;\n`);
+  await f.put('src/CacheScreen.tsx', `import { Image } from 'expo-image';
+export const Screen = () => <>
+  <Image source={require('../assets/coast-hero.png')} cachePolicy="memory-disk" />
+  <Image source={require('../assets/coast-hero.png')} cachePolicy="disk" />
+  <Image source={require('../assets/coast-hero.png')} cachePolicy="memory" />
+  <Image source={require('../assets/coast-hero.png')} cachePolicy="none" />
+  <Image source={require('../assets/coast-hero.png')} cachePolicy={'memory-disk'} />
+  <Image source={require('../assets/coast-hero.png')} contentFit="cover" />
+</>;\n`);
+  const result = await f.run(['--apply']);
+  assert.equal(result.code, 0, result.stdout);
+  assert.equal(result.report.summary.candidates, 6);
+  await typecheckTransformed(f, 'src/CacheScreen.tsx');
+  const transformed = await f.get('src/CacheScreen.tsx');
+  assert.doesNotMatch(transformed, /memory-disk/);
+  const source = ts.createSourceFile('CacheScreen.tsx', transformed, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const policies = [];
+  const visit = node => {
+    if (ts.isJsxAttribute(node) && node.name.text === 'cachePolicy') policies.push(ts.isStringLiteral(node.initializer) ? node.initializer.text : node.initializer.expression.text);
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  assert.deepEqual(policies, ['disk', 'disk', 'memory', 'none', 'disk']);
+});
+
+test('adopt skips unsupported cache literals and every non-literal cache expression', async t => {
+  const f = await fixture(t);
+  const source = `import { Image } from 'expo-image';
+const policy = 'disk';
+export const Screen = () => <>
+  <Image source={require('../assets/coast-hero.png')} cachePolicy="other" />
+  <Image source={require('../assets/coast-hero.png')} cachePolicy={'other'} />
+  <Image source={require('../assets/coast-hero.png')} cachePolicy={policy} />
+  <Image source={require('../assets/coast-hero.png')} cachePolicy={undefined} />
+  <Image source={require('../assets/coast-hero.png')} cachePolicy={true ? 'disk' : 'none'} />
+  <Image source={require('../assets/coast-hero.png')} cachePolicy={\`disk\`} />
+  <Image source={require('../assets/coast-hero.png')} cachePolicy />
+</>;\n`;
+  await f.put('src/CacheScreen.tsx', source);
+  const before = await snapshot(f.root), result = await f.run(['--apply']);
+  assert.equal(result.code, 3, result.stdout);
+  assert.deepEqual(result.report.skipped.map(item => item.reason), Array(7).fill('cache-policy'));
+  assert.deepEqual(await snapshot(f.root), before);
+});
+
+test('adopt skips JSX spreads before or after source, including a module constant source', async t => {
+  const f = await fixture(t);
+  const source = `import { Image } from 'expo-image';
+const hero = require('../assets/coast-hero.png');
+const props = { source: 2, cachePolicy: 'memory-disk' };
+export const Screen = () => <>
+  <Image {...props} source={require('../assets/coast-hero.png')} />
+  <Image source={require('../assets/coast-hero.png')} {...props} />
+  <Image source={hero} {...props} />
+</>;\n`;
+  await f.put('src/SpreadScreen.tsx', source);
+  const before = await snapshot(f.root), result = await f.run(['--apply']);
+  assert.equal(result.code, 3, result.stdout);
+  assert.deepEqual(result.report.skipped.map(item => item.reason), Array(3).fill('spread-attributes'));
+  assert.deepEqual(await snapshot(f.root), before);
+});
+
 test('dry run plans both supported patterns, every changed file, and leaves the complete tree untouched', async t => {
   const f = await fixture(t);
   const source = `"use client";\nimport { Image, View } from 'react-native';\nconst coast = require('../assets/coast-hero.png');\n// Keep this comment and formatting.\nexport const Travel = () => <View>\n  <Image source={require('../assets/coast-hero.png')} style={{ width: 90 }} accessibilityLabel="Coast" />\n  <Image testID='hero' source={coast}><View /></Image>\n</View>;\n`;

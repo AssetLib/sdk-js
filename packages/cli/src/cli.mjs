@@ -9,17 +9,18 @@ import { adopt, formatAdoption } from './adopt.mjs';
 const HELP = `Usage:
   assetlib sync --catalog <path> --platform <ios|android|web|expo> --app-version <v> --build-number <n>
     [--references <dir|file>]... [--root <dir>] [--console <origin>] [--org <uuid>] [--app <uuid>]
-    [--sdk-version <v>] [--dry-run] [--json]
+    [--sdk-version <v>] [--allow-insecure-loopback] [--dry-run] [--json]
   assetlib hash --catalog <path>
   assetlib check --catalog <path> --generated <path>
   assetlib adopt --catalog <path> --src <dir> [--src <dir>]...
     [--generated <path>] [--client-import "<module>#<export>"] [--min-edge <px>] [--apply] [--json]
 
 ASSETLIB_TOKEN supplies the sync token; ASSETLIB_CONSOLE, ASSETLIB_ORG, and ASSETLIB_APP supply defaults.
+Sync requires HTTPS; --allow-insecure-loopback permits HTTP only for localhost, 127.0.0.1, or [::1].
 Exit codes: 0 success, 1 error or generated-file mismatch, 2 partial reference scan, 3 nothing to adopt.
 `;
 const optionsByCommand = {
-  sync: ['catalog', 'platform', 'app-version', 'build-number', 'references', 'root', 'console', 'org', 'app', 'sdk-version', 'dry-run', 'json'],
+  sync: ['catalog', 'platform', 'app-version', 'build-number', 'references', 'root', 'console', 'org', 'app', 'sdk-version', 'allow-insecure-loopback', 'dry-run', 'json'],
   hash: ['catalog'],
   check: ['catalog', 'generated'],
   adopt: ['catalog', 'src', 'generated', 'client-import', 'min-edge', 'apply', 'json'],
@@ -34,7 +35,7 @@ function parseArgs(args) {
     if (!match || !optionsByCommand[command].includes(match[1])) throw new Error('Unknown option. Use --help. Token flags are not supported.');
     const [, name, inline] = match;
     if (!['references', 'src'].includes(name) && Object.hasOwn(options, name)) throw new Error(`Duplicate --${name} option.`);
-    if (['dry-run', 'apply', 'json'].includes(name)) {
+    if (['dry-run', 'apply', 'json', 'allow-insecure-loopback'].includes(name)) {
       if (inline !== undefined) throw new Error(`--${name} does not take a value.`);
       options[name] = true;
       continue;
@@ -73,6 +74,7 @@ function endpoint(options, env) {
   let url;
   try { url = new URL(origin); } catch { throw new Error('--console must be an HTTP(S) origin.'); }
   if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password || url.pathname !== '/' || url.search || url.hash) throw new Error('--console must be an HTTP(S) origin without credentials, a path, query, or fragment.');
+  if (url.protocol !== 'https:' && !(options['allow-insecure-loopback'] && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname))) throw new Error('--console requires HTTPS; HTTP is allowed only for localhost, 127.0.0.1, or [::1] with --allow-insecure-loopback.');
   return `${url.origin}/api/apps/${org}/${app}/builds`;
 }
 

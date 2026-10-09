@@ -1,7 +1,7 @@
 import { Directory, File, Paths } from 'expo-file-system';
 import { fetch as expoFetch } from 'expo/fetch';
-import { SDK_LIMITS, type AssetlibConfig, type AssetStorage, type ResolvedAsset } from '@assetlib/sdk-core';
-import { namespace, installStorageKey, rasterDataUri, validateCacheKey, type ImageUri } from './shared';
+import { SDK_LIMITS, verifyStoredState, type AssetlibConfig, type AssetStorage, type ResolvedAsset } from '@assetlib/sdk-core';
+import { namespace, legacyNamespaces, installStorageKey, rasterDataUri, validateCacheKey, type ImageUri } from './shared';
 
 export const vectorRenderingSupported = false;
 export const platformFetch = expoFetch as unknown as typeof globalThis.fetch;
@@ -20,8 +20,8 @@ function directories(config: AssetlibConfig) {
 }
 export function createPlatformStorage(config: AssetlibConfig): AssetStorage {
   const scope = namespace(config);
-  const loadState = async () => {
-    const { root } = directories(config);
+  let migrationChecked = false;
+  const readState = async (root: Directory) => {
     const candidates: string[] = [];
     // Retain a recoverable journal during replacement. An interrupted write fails
     // closed; it must never make the replay counter silently disappear.
@@ -32,6 +32,56 @@ export function createPlatformStorage(config: AssetlibConfig): AssetStorage {
       candidates.push(await file.text());
     }
     return candidates.sort((a, b) => JSON.parse(b).highestSequence - JSON.parse(a).highestSequence)[0] ?? null;
+  };
+  const writeState = async (root: Directory, serialized: string) => {
+    const next = new File(root, 'state.next');
+    next.create({ overwrite: true }); next.write(serialized);
+    // The journal already contains the full replay state before the marker is
+    // written. A crash at either step cannot make this look like a fresh install.
+    const marker = new File(root, 'migration.complete');
+    marker.create({ overwrite: true }); marker.write('1');
+    await next.move(new File(root, 'state.json'), { overwrite: true });
+  };
+  const loadState = async () => {
+    const { root, images } = directories(config);
+    const current = await readState(root);
+    if (current !== null) { migrationChecked = true; return current; }
+    if (new File(root, 'migration.complete').exists) throw new Error('Previously persisted replay state is missing.');
+    if (migrationChecked) return null;
+    let selected: { root: Directory; raw: string; sequence: number; payload: string } | undefined;
+    for (const legacy of legacyNamespaces(config)) {
+      const oldRoot = new Directory(Paths.document, 'assetlib-v1', legacy);
+      let raw: string | null, state: ReturnType<typeof verifyStoredState>;
+      try {
+        raw = await readState(oldRoot);
+        if (raw === null) continue;
+        state = verifyStoredState(raw, config);
+      } catch { continue; } // Invalid old state is ignored, never removed.
+      if (selected?.sequence === state.highestSequence && selected.payload !== state.history[0].payload) throw new Error('Conflicting legacy replay state.');
+      if (!selected || state.highestSequence > selected.sequence) selected = { root: oldRoot, raw, sequence: state.highestSequence, payload: state.history[0].payload };
+    }
+    if (!selected) { migrationChecked = true; return null; }
+    // Copy bounded artwork before publishing metadata. The core rehashes every
+    // copied cache entry before use, including arm and appearance cache keys.
+    const oldImages = new Directory(selected.root, 'images');
+    let count = 0, bytes = 0;
+    if (oldImages.exists) for (const entry of oldImages.list()) {
+      if (!(entry instanceof File) || !/^[a-f0-9]{64}\.(webp|png)$/.test(entry.name) || entry.size > SDK_LIMITS.assetBytes || entry.size < 1) continue;
+      if (count >= SDK_LIMITS.cacheEntries || bytes + entry.size > SDK_LIMITS.cacheBytes) continue;
+      await entry.copy(new File(images, entry.name), { overwrite: true });
+      count++; bytes += entry.size;
+    }
+    await writeState(root, selected.raw);
+    migrationChecked = true;
+    // Destination is durable before deleting any verified source. Interrupted
+    // cleanup is harmless: the destination prevents all future legacy reads.
+    try {
+      if (await readState(selected.root) === selected.raw) for (const name of ['state.json', 'state.next']) {
+        const file = new File(selected.root, name);
+        if (file.exists) file.delete();
+      }
+    } catch { /* Retain the old copy if cleanup fails. */ }
+    return selected.raw;
   };
   return {
     getOrCreateInstallId: (key, create) => exclusive(`install:${installStorageKey(key)}`, async () => {
@@ -66,11 +116,7 @@ export function createPlatformStorage(config: AssetlibConfig): AssetStorage {
         const previous = JSON.parse(old), next = JSON.parse(serialized);
         if (previous.highestSequence > next.highestSequence || (previous.highestSequence === next.highestSequence && previous.history[0]?.payload !== next.history[0]?.payload)) throw new Error('A newer or conflicting sequence is already stored.');
       }
-      const { root } = directories(config);
-      const next = new File(root, 'state.next');
-      next.create({ overwrite: true });
-      next.write(serialized);
-      await next.move(new File(root, 'state.json'), { overwrite: true });
+      await writeState(directories(config).root, serialized);
     }),
     getAsset: async hash => {
       validateCacheKey(hash);

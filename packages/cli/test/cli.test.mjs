@@ -84,7 +84,7 @@ test('hash prints the canonical hash, and check matches existing generated outpu
 
 test('sync posts the exact body and bearer header, with flags overriding environment defaults', async t => {
   const f = await fixture(t), s = await server(t, 201, registration);
-  const result = await run([...f.sync, '--console', s.origin, '--org', org, '--app', app, '--json'], {
+  const result = await run([...f.sync, '--allow-insecure-loopback', '--console', s.origin, '--org', org, '--app', app, '--json'], {
     ASSETLIB_TOKEN: token, ASSETLIB_CONSOLE: 'http://127.0.0.1:1', ASSETLIB_ORG: 'bad', ASSETLIB_APP: 'bad',
   });
   assert.equal(result.code, 0, result.stderr);
@@ -100,7 +100,7 @@ test('sync posts the exact body and bearer header, with flags overriding environ
 
 test('sync accepts environment defaults and summarizes existing and conflicting placements', async t => {
   const f = await fixture(t), s = await server(t, 200, { ...registration, placements: { created: [], existing: ['travel.coast'], conflicting: [{ key: 'home.hero', reason: 'width differs' }] } });
-  const result = await run(f.sync, { ASSETLIB_TOKEN: token, ASSETLIB_CONSOLE: s.origin, ASSETLIB_ORG: org, ASSETLIB_APP: app });
+  const result = await run([...f.sync, '--allow-insecure-loopback'], { ASSETLIB_TOKEN: token, ASSETLIB_CONSOLE: s.origin, ASSETLIB_ORG: org, ASSETLIB_APP: app });
   assert.equal(result.code, 0); assert.match(result.stdout, /Build:.*33333333/);
   assert.match(result.stdout, /Existing: travel.coast/); assert.match(result.stdout, /home.hero \(width differs\)/);
 });
@@ -108,7 +108,7 @@ test('sync accepts environment defaults and summarizes existing and conflicting 
 for (const [status, error] of [[401, 'Missing or invalid token'], [400, 'catalogHash mismatch'], [403, 'Token revoked'], [413, 'Body too large'], [429, 'Rate limited'], [500, 'Server unavailable']]) {
   test(`HTTP ${status} returns exit 1 with the server message and redacts echoed tokens`, async t => {
     const f = await fixture(t), s = await server(t, status, { error: `${error} ${token}` });
-    const result = await run([...f.sync, '--json'], { ASSETLIB_TOKEN: token, ASSETLIB_CONSOLE: s.origin, ASSETLIB_ORG: org, ASSETLIB_APP: app });
+    const result = await run([...f.sync, '--allow-insecure-loopback', '--json'], { ASSETLIB_TOKEN: token, ASSETLIB_CONSOLE: s.origin, ASSETLIB_ORG: org, ASSETLIB_APP: app });
     assert.equal(result.code, 1); assert.equal(result.stderr, '');
     assert.equal(JSON.parse(result.stdout).error, `HTTP ${status}: ${error} [REDACTED]`);
   });
@@ -116,7 +116,7 @@ for (const [status, error] of [[401, 'Missing or invalid token'], [400, 'catalog
 
 test('sync does not follow redirects', async t => {
   const f = await fixture(t), s = await server(t, 302, { error: 'Redirect refused' });
-  const result = await run(f.sync, { ASSETLIB_TOKEN: token, ASSETLIB_CONSOLE: s.origin, ASSETLIB_ORG: org, ASSETLIB_APP: app });
+  const result = await run([...f.sync, '--allow-insecure-loopback'], { ASSETLIB_TOKEN: token, ASSETLIB_CONSOLE: s.origin, ASSETLIB_ORG: org, ASSETLIB_APP: app });
   assert.equal(result.code, 1); assert.match(result.stderr, /HTTP 302/); assert.equal(s.requests.length, 1);
 });
 
@@ -131,7 +131,7 @@ test('invalid flags and build identity fail locally; token is environment-only',
     const result = await run(args, { ASSETLIB_TOKEN: token });
     assert.equal(result.code, 1); assert.ok(!(result.stdout + result.stderr).includes(token));
   }
-  const missing = await run([...f.sync, '--console', 'http://127.0.0.1:1', '--org', org, '--app', app]);
+  const missing = await run([...f.sync, '--allow-insecure-loopback', '--console', 'http://127.0.0.1:1', '--org', org, '--app', app]);
   assert.equal(missing.code, 1); assert.match(missing.stderr, /ASSETLIB_TOKEN is required/);
 });
 
@@ -150,7 +150,7 @@ test('partial scans still register bounded references and return exit 2 after HT
   await writeFile(source, '"travel.coast"\n'.repeat(201));
   const args = [...f.sync, '--references', source, '--json'];
   const s = await server(t, 201, registration);
-  const sync = await run(args, { ASSETLIB_TOKEN: token, ASSETLIB_CONSOLE: s.origin, ASSETLIB_ORG: org, ASSETLIB_APP: app });
+  const sync = await run([...args, '--allow-insecure-loopback'], { ASSETLIB_TOKEN: token, ASSETLIB_CONSOLE: s.origin, ASSETLIB_ORG: org, ASSETLIB_APP: app });
   assert.equal(sync.code, 2); assert.equal(s.requests[0].body.codeReferences.length, 200);
 });
 
@@ -190,4 +190,43 @@ test('POST uses a 30-second abort signal and never exposes timeout secrets', asy
     stdout: { write: text => { stdout += text; } }, stderr: { write: text => { stderr += text; } },
   });
   assert.equal(deadline, 30_000); assert.equal(code, 1); assert.equal(stdout, ''); assert.match(stderr, /\[REDACTED\]/); assert.ok(!stderr.includes(token));
+});
+
+test('sync rejects HTTP before constructing an authenticated request, including unflagged loopback', async t => {
+  const f = await fixture(t);
+  const fetch = t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify(registration), { status: 201 }));
+  const deadline = t.mock.method(AbortSignal, 'timeout', () => new AbortController().signal);
+  for (const origin of ['http://console.example', 'http://localhost:3000', 'http://127.0.0.1:3000', 'http://[::1]:3000']) {
+    let stdout = '', stderr = '';
+    const code = await main([...f.sync, '--json'], { ASSETLIB_TOKEN: token, ASSETLIB_CONSOLE: origin, ASSETLIB_ORG: org, ASSETLIB_APP: app }, {
+      stdout: { write: text => { stdout += text; } }, stderr: { write: text => { stderr += text; } },
+    });
+    assert.equal(code, 1, origin);
+    assert.match(JSON.parse(stdout).error, /HTTPS/);
+    assert.equal(stderr, '');
+    assert.equal(fetch.mock.callCount(), 0, origin);
+    assert.equal(deadline.mock.callCount(), 0, 'request options must not be constructed');
+  }
+});
+
+test('sync insecure flag permits only the three explicit loopback hosts and takes no value', async t => {
+  const f = await fixture(t);
+  const fetch = t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify(registration), { status: 201 }));
+  for (const [origin, allowed] of [
+    ['http://localhost:3000', true], ['http://127.0.0.1:3000', true], ['http://[::1]:3000', true],
+    ['https://console.example', true], ['http://console.example', false], ['http://localhost.example', false],
+    ['http://127.0.0.2:3000', false], ['http://[::ffff:127.0.0.1]:3000', false],
+  ]) {
+    fetch.mock.resetCalls();
+    let stdout = '';
+    const code = await main([...f.sync, '--allow-insecure-loopback', '--json', '--console', origin, '--org', org, '--app', app], { ASSETLIB_TOKEN: token }, {
+      stdout: { write: text => { stdout += text; } }, stderr: { write() {} },
+    });
+    assert.equal(code, allowed ? 0 : 1, `${origin}: ${stdout}`);
+    assert.equal(fetch.mock.callCount(), allowed ? 1 : 0, origin);
+    if (allowed) assert.equal(fetch.mock.calls[0].arguments[1].headers.Authorization, `Bearer ${token}`);
+    else assert.match(JSON.parse(stdout).error, /HTTPS/);
+  }
+  const invalid = await run([...f.sync, '--allow-insecure-loopback=true', '--dry-run']);
+  assert.equal(invalid.code, 1); assert.match(invalid.stderr, /does not take a value/);
 });

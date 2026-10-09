@@ -239,3 +239,103 @@ test('cancellation after an asynchronous decision prevents artwork delivery', as
   await started; controller.abort(); choose('b');
   await assert.rejects(pending, /cancelled/); assert.deepEqual(h.requests, []);
 });
+
+const deferred = () => {
+  let resolve;
+  const promise = new Promise(done => { resolve = done; });
+  return { promise, resolve };
+};
+async function within(promise, ms = 400) {
+  let timer;
+  try { return await Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('operation stayed blocked')), ms); })]); }
+  finally { clearTimeout(timer); }
+}
+
+for (const stateful of [false, true]) {
+  const method = stateful ? 'resolveStateSet' : 'resolve';
+  const reference = stateful ? stateRef : ref;
+  test(`${method}: a never-resolving decision allows refresh, initialize and explicit requests, then times out`, async () => {
+    const started = deferred(); let calls = 0;
+    const h = await refreshed(release(1, stateful), { decisionTimeoutMs: 100, decide: () => { calls++; started.resolve(); return new Promise(() => {}); } });
+    const pending = h.client[method](reference);
+    await within(started.promise);
+    h.setRelease(release(2, stateful));
+    const [refresh, status, control, explicit] = await within(Promise.all([
+      h.client.refresh(), h.client.initialize(), h.client[method](reference, { arm: 'control' }), h.client[method](reference, { arm: 'b' }),
+    ]));
+    assert.equal(refresh.sequence, 2); assert.equal(status.sequence, 2);
+    assert.equal(control.armSource, 'explicit'); assert.equal(control.arm, null);
+    assert.equal(explicit.armSource, 'explicit'); assert.equal(explicit.arm, 'b'); assert.equal(calls, 1);
+    const result = await within(pending);
+    assert.equal(result.sequence, 2); assert.equal(result.arm, null); assert.equal(result.armSource, 'invalid-decision');
+    assert.match(result.message, /timed out/);
+  });
+  for (const concurrentClient of [false, true]) test(`${method}: decision resolves using ${concurrentClient ? 'another client\'s durable' : 'refreshed'} release`, async () => {
+    const started = deferred(), choice = deferred();
+    const h = await refreshed(release(1, stateful), { decide: () => { started.resolve(); return choice.promise; } });
+    const pending = h.client[method](reference);
+    await within(started.promise);
+    const newer = release(2, stateful); h.setRelease(newer);
+    const writer = concurrentClient ? new AssetClient(config, { storage: h.storage, fetch: h.fetch }) : h.client;
+    assert.equal((await within(writer.refresh())).sequence, 2);
+    choice.resolve('b');
+    const result = await within(pending);
+    assert.equal(result.sequence, 2); assert.equal(result.armSource, 'decision'); assert.equal(result.arm, 'b');
+    const selected = newer.slots[0].cells[1];
+    if (stateful) for (const name of reference.states) assert.equal(result.states[name].assetId, selected.states[name].assetId);
+    else assert.equal(result.assetId, selected.assetId);
+    assert.equal(h.client.getStatus().sequence, 2);
+  });
+  test(`${method}: decision is validated against the current release's declared arms`, async () => {
+    const started = deferred(), choice = deferred();
+    const h = await refreshed(release(1, stateful), { decide: () => { started.resolve(); return choice.promise; } });
+    const pending = h.client[method](reference); await within(started.promise);
+    const newer = release(2, stateful);
+    newer.slots[0].variants.arm = ['c']; newer.slots[0].cells = newer.slots[0].cells.filter(cell => cell.arm !== 'b');
+    h.setRelease(newer); await h.client.refresh(); choice.resolve('b');
+    const result = await within(pending);
+    assert.equal(result.sequence, 2); assert.equal(result.arm, null); assert.equal(result.armSource, 'invalid-decision');
+    assert.match(result.message, /undeclared arm/);
+  });
+  for (const corruption of ['malformed', 'missing', 'rollback', 'conflict', 'throws']) test(`${method}: decision outliving ${corruption} durable state detection uses only the bundle`, async () => {
+    const started = deferred(), choice = deferred(), base = createMemoryStorage();
+    let replacement;
+    const storage = { ...base, loadState: async () => {
+      if (replacement === 'throws') throw new Error('storage unavailable');
+      return replacement === undefined ? base.loadState() : replacement;
+    } };
+    const h = await refreshed(release(2, stateful), { storage, decide: () => { started.resolve(); return choice.promise; } });
+    await h.client[method](reference, { arm: 'b' });
+    h.requests.length = 0;
+    const pending = h.client[method](reference); await within(started.promise);
+    replacement = corruption === 'malformed' ? '{broken' : corruption === 'missing' ? null : corruption === 'throws' ? 'throws'
+      : JSON.stringify({ version: 1, highestSequence: corruption === 'rollback' ? 1 : 2, history: [signed({ ...release(corruption === 'rollback' ? 1 : 2, stateful), createdAt: '2026-10-09T12:00:00.000Z' })] });
+    const refresh = await within(h.client.refresh());
+    choice.resolve('b');
+    const result = await within(pending);
+    assert.equal(result.source, 'bundle'); assert.equal(result.sequence, null); assert.equal(result.fallbackReason, 'verification');
+    assert.match(refresh.error, /could not be verified/); assert.equal(h.requests.length, 0);
+    assert.equal((await h.client[method](reference, { arm: 'control' })).source, 'bundle');
+  });
+}
+
+test('decision timeout defaults to 1500 milliseconds', async t => {
+  const started = deferred();
+  const h = await refreshed(release(1), { decide: () => { started.resolve(); return new Promise(() => {}); } });
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let resolved = false;
+  const pending = h.client.resolve(ref).then(result => { resolved = true; return result; });
+  await started.promise;
+  t.mock.timers.tick(1499); await Promise.resolve(); assert.equal(resolved, false);
+  t.mock.timers.tick(1);
+  t.mock.timers.reset();
+  const result = await within(pending);
+  assert.equal(result.armSource, 'invalid-decision'); assert.match(result.message, /timed out/);
+});
+
+test('decisionTimeoutMs accepts only integer milliseconds between 100 and 10000', () => {
+  for (const decisionTimeoutMs of [99, 10001, 100.5, NaN, Infinity, '1500', true, null]) {
+    assert.throws(() => new AssetClient(config, { storage: createMemoryStorage(), decisionTimeoutMs }), /decisionTimeoutMs/);
+  }
+  for (const decisionTimeoutMs of [100, 1500, 10000]) assert.doesNotThrow(() => new AssetClient(config, { storage: createMemoryStorage(), decisionTimeoutMs }));
+});

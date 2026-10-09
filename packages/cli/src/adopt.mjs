@@ -165,9 +165,18 @@ function findCandidate(call, info) {
   const attribute = jsxAttribute(expression), opening = openingOf(attribute);
   if (!attribute || attribute.name.text !== 'source' || !opening) return { reason: reasonFor(expression) };
   if (!ts.isIdentifier(opening.tagName) || opening.tagName.text !== 'Image' || !info.imports.some(item => ['react-native', 'expo-image'].includes(item.module) && item.exported === 'Image' && item.name.text === 'Image' && checker.getSymbolAtLocation(opening.tagName) === item.symbol)) return { reason: 'image-not-imported' };
+  if (opening.attributes.properties.some(ts.isJsxSpreadAttribute)) return { reason: 'spread-attributes' };
   if (opening.attributes.properties.filter(item => ts.isJsxAttribute(item) && item.name.text === 'source').length !== 1 || opening.attributes.properties.some(item => ts.isJsxAttribute(item) && ['client', 'asset', 'fallback'].includes(item.name.text))) return { reason: 'attribute-conflict' };
   if (checker.getSymbolAtLocation(call.expression)) return { reason: 'shadowed-require' };
-  return { attribute, opening, expression };
+  const policies = opening.attributes.properties.filter(item => ts.isJsxAttribute(item) && item.name.text === 'cachePolicy');
+  if (policies.length > 1) return { reason: 'cache-policy' };
+  let cacheLiteral;
+  if (policies.length) {
+    const initializer = policies[0].initializer;
+    cacheLiteral = initializer && ts.isJsxExpression(initializer) ? initializer.expression : initializer;
+    if (!cacheLiteral || !ts.isStringLiteral(cacheLiteral) || !['memory-disk', 'disk', 'memory', 'none'].includes(cacheLiteral.text)) return { reason: 'cache-policy' };
+  }
+  return { attribute, opening, expression, cacheLiteral };
 }
 
 function words(value) { return value.replace(/([a-z0-9])([A-Z])/g, '$1-$2').split(/[^A-Za-z0-9]+/).filter(Boolean).map(word => word.toLowerCase()); }
@@ -194,10 +203,11 @@ function editSource(info, candidates, generated, clientModule, clientExport) {
   const assetsName = addImport(relativeImport(source.fileName, generated), 'AppAssets', 'AppAssets');
   const clientName = addImport(clientModule, clientExport, clientExport === 'default' ? 'client' : clientExport);
   for (const candidate of candidates) {
-    const { opening, attribute, expression, placement } = candidate;
+    const { opening, attribute, expression, placement, cacheLiteral } = candidate;
     edits.push({ start: opening.tagName.getStart(source), end: opening.tagName.end, text: imageName });
     if (ts.isJsxOpeningElement(opening)) edits.push({ start: opening.parent.closingElement.tagName.getStart(source), end: opening.parent.closingElement.tagName.end, text: imageName });
     edits.push({ start: attribute.getStart(source), end: attribute.end, text: `client={${clientName}} asset={${assetsName}.${placement.symbol.join('.')}} fallback={${expression.getText(source)}}` });
+    if (cacheLiteral?.text === 'memory-disk') edits.push({ start: cacheLiteral.getStart(source), end: cacheLiteral.end, text: quote('disk') });
   }
   if (additions.length) {
     const newline = source.text.includes('\r\n') ? '\r\n' : '\n';

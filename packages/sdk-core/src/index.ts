@@ -154,6 +154,26 @@ async function fetchBounded(fetcher: typeof fetch, url: string, maxBytes: number
 
 type State = { version: 1; highestSequence: number; history: SignedManifest[] };
 
+/** Durable replay identity survives authorized route and signing-key changes. */
+export function storageNamespace(config: AssetlibConfig): string {
+  return hashBytes(utf8ToBytes(JSON.stringify([new URL(config.manifestUrl).origin, config.orgId, config.appId, config.environment]))).slice(0, 32);
+}
+
+/** Use the same verification for normal state loads and legacy namespace migration. */
+export function verifyStoredState(serialized: string, config: AssetlibConfig): State {
+  if (utf8ToBytes(serialized).length > SDK_LIMITS.stateBytes) throw new Error('Stored SDK state exceeds its bound.');
+  const state: unknown = JSON.parse(serialized);
+  if (!record(state) || state.version !== 1 || !integer(state.highestSequence, 1, 2_147_483_647) || !Array.isArray(state.history) || state.history.length < 1 || state.history.length > SDK_LIMITS.retainedReleases) throw new Error('Stored SDK state is invalid.');
+  let previous = state.highestSequence + 1;
+  for (const [index, entry] of state.history.entries()) {
+    const { payload } = verifySignedManifest(entry, config);
+    if (payload.sequence >= previous) throw new Error('Stored release order is invalid.');
+    if (index === 0 && payload.sequence !== state.highestSequence) throw new Error('Stored sequence does not match its signed manifest.');
+    previous = payload.sequence;
+  }
+  return state as State;
+}
+
 export class AssetClient {
   readonly config: AssetlibConfig;
   private state: State = { version: 1, highestSequence: 0, history: [] };
@@ -164,6 +184,7 @@ export class AssetClient {
   private reporter?: ObservationReporter;
   private queue: Promise<unknown> = Promise.resolve();
   private timeoutMs: number;
+  private decisionTimeoutMs: number;
   private fetcher: typeof fetch;
   private formats: readonly AssetMime[];
   private policy: CachePolicy;
@@ -180,6 +201,8 @@ export class AssetClient {
     if (!integer(this.concurrency, 1, 8)) fail('maxConcurrentDownloads must be between 1 and 8.');
     this.timeoutMs = options.timeoutMs ?? 8000;
     if (!integer(this.timeoutMs, 20, 30000)) fail('timeoutMs must be between 20 and 30000.');
+    this.decisionTimeoutMs = options.decisionTimeoutMs === undefined ? 1500 : options.decisionTimeoutMs;
+    if (!integer(this.decisionTimeoutMs, 100, 10000)) fail('decisionTimeoutMs must be between 100 and 10000.');
     this.fetcher = options.fetch ?? globalThis.fetch;
     if (options.telemetry?.enabled === true) {
       try { this.reporter = new ObservationReporter(this.config, options.storage, this.fetcher, options.telemetry); }
@@ -206,22 +229,22 @@ export class AssetClient {
   }
   initialize(): Promise<ClientStatus> { return this.serial(async () => { await this.load(); return this.getStatus(); }); }
   private async load(): Promise<void> {
-    if (this.initialized) return;
     this.initialized = true;
+    if (this.storageFailure) return;
     try {
       const raw = await this.options.storage.loadState();
-      if (raw === null) return;
-      if (utf8ToBytes(raw).length > SDK_LIMITS.stateBytes) throw new Error('Stored SDK state exceeds its bound.');
-      const state: unknown = JSON.parse(raw);
-      if (!record(state) || state.version !== 1 || !integer(state.highestSequence, 1, 2_147_483_647) || !Array.isArray(state.history) || state.history.length < 1 || state.history.length > SDK_LIMITS.retainedReleases) throw new Error('Stored SDK state is invalid.');
-      let previous = state.highestSequence + 1;
-      for (const entry of state.history) {
-        const { payload } = verifySignedManifest(entry, this.config);
-        if (payload.sequence >= previous) throw new Error('Stored release order is invalid.');
-        previous = payload.sequence;
+      if (raw === null) {
+        if (this.state.highestSequence) throw new Error('Stored release state disappeared.');
+        return;
       }
-      if (verifySignedManifest(state.history[0], this.config).payload.sequence !== state.highestSequence) throw new Error('Stored sequence does not match its signed manifest.');
-      this.state = state as State;
+      const next = verifyStoredState(raw, this.config);
+      if (next.highestSequence < this.state.highestSequence) throw new Error('Stored release state moved backwards.');
+      const accepted = new Map(this.state.history.map(entry => [verifySignedManifest(entry, this.config).payload.sequence, entry.payload]));
+      for (const entry of next.history) {
+        const previous = accepted.get(verifySignedManifest(entry, this.config).payload.sequence);
+        if (previous !== undefined && previous !== entry.payload) throw new Error('Stored release state conflicts with an accepted release.');
+      }
+      this.state = next;
     } catch {
       this.storageFailure = 'Stored release state could not be verified. Using bundled assets; repair or explicitly reset app data before reconnecting.';
       this.lastError = this.storageFailure;
@@ -262,7 +285,7 @@ export class AssetClient {
   }
   /** Only metadata transitions use the serial queue. Image transfers are bounded and concurrent. */
   private snapshot(): Promise<{ payload: ManifestPayload }[]> {
-    return this.serial(async () => { await this.load(); return this.state.history.map(entry => ({ payload: verifySignedManifest(entry, this.config).payload })); });
+    return this.serial(async () => { await this.load(); return this.storageFailure ? [] : this.state.history.map(entry => ({ payload: verifySignedManifest(entry, this.config).payload })); });
   }
   private withTransfer<T>(work: () => Promise<T>, signal?: AbortSignal): Promise<T> {
     throwIfAborted(signal);
@@ -299,13 +322,33 @@ export class AssetClient {
   private async decideArm(ref: AssetRef, slot: ManifestSlot | undefined, options: ResolveOptions): Promise<ArmDecision> {
     if (options.arm !== undefined) return { arm: options.arm === 'control' ? undefined : options.arm, armSource: 'explicit' };
     if (!slot?.variants?.arm?.length || !this.options.decide) return { armSource: 'control' };
+    const decide = this.options.decide;
+    const request = { key: ref.key, arms: Object.freeze([...slot.variants.arm]), ...(options.appearance !== undefined ? { appearance: options.appearance } : {}) };
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timedOut = Symbol('decision-timeout');
     try {
-      const arm = await this.options.decide({ key: ref.key, arms: Object.freeze([...slot.variants.arm]), ...(options.appearance !== undefined ? { appearance: options.appearance } : {}) });
-      if (arm !== undefined && slot.variants.arm.includes(arm)) return { arm, armSource: 'decision' };
+      const deadline = new Promise<typeof timedOut>(resolve => { timer = setTimeout(() => resolve(timedOut), this.decisionTimeoutMs); });
+      const arm = await Promise.race([Promise.resolve().then(() => decide(request)), deadline]);
+      if (arm === timedOut) return { armSource: 'invalid-decision', reason: 'Decision callback timed out; using control.' };
+      // Declarations are checked against the release reloaded after this callback.
+      if (typeof arm === 'string') return { arm, armSource: 'decision' };
       return { armSource: 'invalid-decision', reason: arm === undefined ? 'Decision returned no arm; using control.' : 'Decision returned an undeclared arm; using control.' };
     } catch {
       return { armSource: 'invalid-decision', reason: 'Decision callback threw; using control.' };
+    } finally { if (timer !== undefined) clearTimeout(timer); }
+  }
+  private async decisionSnapshot(ref: AssetRef, options: ResolveOptions) {
+    const matches = (item: ManifestSlot) => item.key === ref.key && item.width === ref.width && item.height === ref.height;
+    const initial = await this.snapshot();
+    let decision = await this.decideArm(ref, initial[0]?.payload.slots.find(matches), options);
+    throwIfAborted(options.signal);
+    // Application callbacks never own the operation queue. Reacquire it and
+    // verify durable state before using any release or arm after a callback.
+    const history = decision.armSource === 'explicit' || decision.armSource === 'control' ? initial : await this.snapshot();
+    if (decision.armSource === 'decision' && !history[0]?.payload.slots.find(matches)?.variants?.arm?.includes(decision.arm!)) {
+      decision = { armSource: 'invalid-decision', reason: 'Decision returned an undeclared arm; using control.' };
     }
+    return { history, decision, matches };
   }
   private async resolveDescriptor(slot: ManifestSlot, sequence: number, download: boolean, options: ResolveOptions): Promise<ResolvedAsset> {
     validateAppearance(options.appearance);
@@ -344,9 +387,7 @@ export class AssetClient {
     validateAppearance(options.appearance);
     validateArm(options.arm);
     targetPixels(ref, options); cachePolicy(options.cachePolicy ?? this.policy); throwIfAborted(options.signal);
-    const history = await this.snapshot();
-    const matches = (item: ManifestSlot) => item.key === ref.key && item.width === ref.width && item.height === ref.height;
-    const decision = await this.decideArm(ref, history[0]?.payload.slots.find(matches), options);
+    const { history, decision, matches } = await this.decisionSnapshot(ref, options);
     throwIfAborted(options.signal);
     const resolvedOptions = { ...options, arm: decision.arm };
     let message = this.storageFailure ?? 'No compatible published artwork is available.';
@@ -368,9 +409,7 @@ export class AssetClient {
     validateAppearance(options.appearance);
     validateArm(options.arm);
     targetPixels(ref, options); cachePolicy(options.cachePolicy ?? this.policy); throwIfAborted(options.signal);
-    const history = await this.snapshot();
-    const matches = (item: ManifestSlot) => item.key === ref.key && item.width === ref.width && item.height === ref.height;
-    const decision = await this.decideArm(ref, history[0]?.payload.slots.find(matches), options);
+    const { history, decision, matches } = await this.decisionSnapshot(ref, options);
     throwIfAborted(options.signal);
     const resolvedOptions = { ...options, arm: decision.arm };
     let reason: FallbackReason = this.storageFailure ? 'verification' : !history.length && this.lastError ? this.lastRefreshReason : 'missing';

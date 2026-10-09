@@ -23,6 +23,7 @@ import { createHash } from 'node:crypto';
 export const hashBytes = bytes => createHash('sha256').update(bytes).digest('hex');
 export const parsePublicConfig = value => value;
 export const createAssetClient = (config, options) => ({ config, options, flush: async () => { globalThis.__assetlibAdapter.flushes++; if (globalThis.__assetlibAdapter.flushError) throw new Error('offline'); }, dispose: () => { globalThis.__assetlibAdapter.disposals++; } });
+export { storageNamespace, verifyStoredState } from '${pathToFileURL(path.join(root, '../sdk-core/dist/index.js')).href}';
 export { resolveAccessibilityDescription } from '${pathToFileURL(path.join(root, '../sdk-core/dist/accessibility.js')).href}';
 `);
 await writeFile(path.join(temporary, 'platform.mjs'), `
@@ -102,7 +103,7 @@ function harness() {
   globalThis.__assetlibAdapter = { fileCalls: 0, fileData: new Map(), appStateListeners: new Set(), flushes: 0, disposals: 0, optionalRequire: () => { throw new Error('Module absent'); }, imageUri: async (_config, result) => ({ uri: `verified:${result.assetId}`, release() { released.push(result.assetId); } }) };
   return { released };
 }
-const config = { appId: 'test' };
+const config = { manifestUrl: 'https://delivery.test/manifest', orgId: 'org', appId: 'test', environment: 'production' };
 const group = { key: 'tasks.garden', width: 120, height: 120, states: ['sprout', 'grown'] };
 const fallbacks = { sprout: 1, grown: 2 };
 const description = text => ({ defaultLocale: 'en', descriptions: { en: text, th: `ไทย ${text}` } });
@@ -145,8 +146,9 @@ test('factory preserves durable storage while forwarding image retention policy'
 
 test('factory forwards the app decision callback unchanged', () => {
   const decide = async ({ arms }) => arms[0];
-  const client = adapter.createExpoAssetClient(config, { decide });
+  const client = adapter.createExpoAssetClient(config, { decide, decisionTimeoutMs: 250 });
   assert.equal(client.options.decide, decide);
+  assert.equal(client.options.decisionTimeoutMs, 250);
 });
 
 test('state changes select a pinned complete family without refetching or mixing fallbacks', async () => {
@@ -624,14 +626,14 @@ test('state image observations follow the active state and ignore replaced state
   await act(async () => { view.unmount(); });
 });
 
-test('storage namespace preserves legacy single-key and equivalent singleton-set configurations', () => {
+test('storage namespace ignores single-key and singleton-set configuration differences', () => {
   const legacy = { manifestUrl: 'https://delivery.test/manifest', orgId: 'org', appId: 'app', environment: 'production', pinnedPublicKey: 'first' };
-  assert.equal(namespace(legacy), '7363dc89776f6a9ba092184860871bce');
+  assert.match(namespace(legacy), /^[a-f0-9]{32}$/);
   assert.equal(namespace({ ...legacy, pinnedPublicKeys: ['first'] }), namespace(legacy));
   assert.equal(namespace({ ...legacy, pinnedPublicKey: undefined, pinnedPublicKeys: ['first'] }), namespace(legacy));
 });
 
-test('native replay state survives rotation within a pinned set and is isolated from other trust sets', async () => {
+test('native replay storage retains state across every trust-set change for core revalidation', async () => {
   harness(); globalThis.__assetlibAdapter.allowFiles = true;
   const common = { manifestUrl: 'https://delivery.test/manifest', orgId: 'org', appId: 'app', environment: 'production' };
   const original = native.createPlatformStorage({ ...common, pinnedPublicKey: 'first', pinnedPublicKeys: ['second', 'first'] });
@@ -652,7 +654,7 @@ test('native replay state survives rotation within a pinned set and is isolated 
     { pinnedPublicKeys: ['third', 'fourth'] },
   ]) {
     const other = native.createPlatformStorage({ ...common, ...signingConfig });
-    assert.equal(await other.loadState(), null);
+    assert.equal(await other.loadState(), state);
   }
 });
 
