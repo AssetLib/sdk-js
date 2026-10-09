@@ -38,7 +38,7 @@ Changed for this workstream:
 
 Runtime: Node `v24.21.0`, npm `11.19.0` (satisfies Node 22+).
 
-Required command, run from `/Users/tylerzhao/Desktop/asset-lib-saas/repos/sdk-js`:
+Required command, run from the repository root:
 
 ```sh
 npm run verify
@@ -448,9 +448,9 @@ test at test/cli.test.mjs:148:1
   }
 npm error Lifecycle script `test` failed with error:
 npm error code 1
-npm error path /Users/tylerzhao/Desktop/asset-lib-saas/repos/sdk-js/packages/cli
+npm error path <repository root>/packages/cli
 npm error workspace @assetlib/cli@0.1.0
-npm error location /Users/tylerzhao/Desktop/asset-lib-saas/repos/sdk-js/packages/cli
+npm error location <repository root>/packages/cli
 npm error command failed
 npm error command sh -c node --test test/*.test.mjs
 ```
@@ -510,8 +510,8 @@ Other checks:
 - `npm run build --workspace @assetlib/sdk-core && node --test packages/sdk-core/test/environment.test.mjs`: exit 0; 5 passed / 0 failed.
 - `node --test packages/cli/test/detection.test.mjs`: exit 0; 7 passed / 0 failed.
 - `node --test packages/cli/test/references.test.mjs`: exit 0; 8 passed / 0 failed, including the 20,000-entry cutoff fixture.
-- `npm install --package-lock-only --offline --ignore-scripts --no-audit --no-fund --cache /private/tmp/assetlib-cli-npm-cache`: exit 0 (`up to date in 297ms`); registered the workspace in the lockfile with no runtime dependencies.
-- `npm pack --workspace @assetlib/cli --dry-run --json --cache /private/tmp/assetlib-cli-npm-cache`: exit 0; 10 package entries, executable binary, all six source modules, README and MIT license; 12,699 packed / 35,327 unpacked bytes. Nothing published.
+- `npm install --package-lock-only --offline --ignore-scripts --no-audit --no-fund --cache <temporary npm cache directory>`: exit 0 (`up to date in 297ms`); registered the workspace in the lockfile with no runtime dependencies.
+- `npm pack --workspace @assetlib/cli --dry-run --json --cache <temporary npm cache directory>`: exit 0; 10 package entries, executable binary, all six source modules, README and MIT license; 12,699 packed / 35,327 unpacked bytes. Nothing published.
 - `git diff --check`: exit 0, no output.
 
 ## 3. Deviations and interpretation
