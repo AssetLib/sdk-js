@@ -4,12 +4,14 @@ Register a checked-in Assetlib catalog with the console from an application buil
 
 ## Install
 
+The CLI is not on the npm registry. Install the exact tarball attached to a GitHub release of this repository; release `v0.4.0-preview.1` ships `@assetlib/cli` 0.1.0:
+
 ```sh
-npm install --save-dev @assetlib/cli
+npm install --save-dev https://github.com/AssetLib/sdk-js/releases/download/v0.4.0-preview.1/assetlib-cli-0.1.0.tgz
 npx assetlib --help
 ```
 
-The workspace can also be run directly before publication:
+Check the tarball against the release's `SHA256SUMS`, and pin it in your lockfile. From a checkout of this repository, after `npm ci`, run it directly:
 
 ```sh
 node packages/cli/bin/assetlib.mjs --help
@@ -21,7 +23,7 @@ node packages/cli/bin/assetlib.mjs --help
 assetlib sync --catalog assetlib.catalog.json \
   --platform ios --app-version 1.6.0 --build-number 231 \
   --references src --references ios \
-  --console https://console.example.com \
+  --console https://console.assetlib.dev \
   --org 11111111-1111-4111-8111-111111111111 \
   --app 22222222-2222-4222-8222-222222222222
 
@@ -111,7 +113,7 @@ Dimensions are the encoded pixel dimensions, not React Native layout dimensions.
 | Variable | Purpose |
 | --- | --- |
 | `ASSETLIB_TOKEN` | App API token with `declare` scope. Required only for a real sync. Supply through your shell/CI secret store; there is no token flag. |
-| `ASSETLIB_CONSOLE` | Console HTTPS origin, such as `https://console.example.com`. See the explicit loopback exception below. |
+| `ASSETLIB_CONSOLE` | Console HTTPS origin: `https://console.assetlib.dev` for the hosted console. See the explicit loopback exception below. |
 | `ASSETLIB_ORG` | Organization UUID. |
 | `ASSETLIB_APP` | App UUID. |
 

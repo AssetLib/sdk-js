@@ -4,7 +4,7 @@ Signed app artwork delivery with typed placement references and bundled fallback
 
 Try the hosted developer preview:
 
-- [Assetlib console](https://assetlib-console.vercel.app) — sign in with GitHub and create a workspace with original demo artwork.
+- [Assetlib console](https://console.assetlib.dev) — sign in with GitHub and create a workspace with original demo artwork.
 - [Travel demo](https://assetlib-travel.vercel.app) — browse the app, then connect your workspace to update its travel images.
 - [Todo demo](https://assetlib-todo.vercel.app) — try the same release workflow with a task illustration.
 
@@ -14,9 +14,10 @@ Copy the public SDK configuration from the console into a demo’s **Connect** s
 | --- | --- |
 | [`@assetlib/sdk-core`](packages/sdk-core) | Pinned Ed25519 manifest verification, SHA-256 image checks, durable sequence tracking, compatible cached fallback, local catalog code generation, signed PNG/WebP size selection, localized image descriptions |
 | [`@assetlib/sdk-expo`](packages/sdk-expo) | Expo 57 component, native file cache, web IndexedDB cache, `expo-image` rendering, browser-only opt-in SVG, per-usage accessibility modes |
+| [`@assetlib/cli`](packages/cli) | `assetlib sync` build and catalog registration, `hash`, `check` for generated references, and the dry-run-first `adopt` codemod |
 | [`@assetlib/audit`](packages/audit) | Read-only PNG/JPEG/WebP inventory, duplicate evidence, dimension candidates, optional literal-reference hints |
 
-Separate [Swift](https://github.com/AssetLib/sdk-swift) and [Kotlin](https://github.com/AssetLib/sdk-android) previews are available. This release does not include a remote MCP server, marketplace package, or npm registry publication. SDK source and release tarballs are public; the hosted Assetlib console is a separate service.
+Separate [Swift](https://github.com/AssetLib/sdk-swift) and [Kotlin](https://github.com/AssetLib/sdk-android) previews are available. The SDK and CLI packages are not on the npm registry; install them from the tarballs attached to a GitHub release. Only the read-only audit is published to npm, and its agent plugin lives in [AssetLib/agent-plugins](https://github.com/AssetLib/agent-plugins). This repository does not include a remote MCP server. SDK source and release tarballs are public; the hosted Assetlib console is a separate service.
 
 ## Install the preview SDKs
 
@@ -29,7 +30,7 @@ npm install \
 npx expo install expo-file-system expo-image
 ```
 
-The preview targets Expo 57, React Native 0.86, and React 19. Pin the installed versions in your application's lockfile. Check `SHA256SUMS` attached to the release when reviewing downloaded artifacts.
+The preview targets Expo 57, React Native 0.86, and React 19. Pin the installed versions in your application's lockfile. Check `SHA256SUMS` attached to the release when reviewing downloaded artifacts. The same release attaches the `assetlib` CLI as `assetlib-cli-0.1.0.tgz`; see the [CLI install steps](packages/cli/README.md#install).
 
 ## Connect one artwork placement
 
@@ -58,7 +59,7 @@ Obtain public app configuration from your authenticated Assetlib workspace. It c
 
 See the [core guide](packages/sdk-core/README.md) for the checked-in catalog format and offline generator. Application code uses generated references such as `AppAssets.Travel.coast`; compatible artwork updates preserve that reference. Schema v1 still uses placement keys, with exact width/height contracts. Renames and contract changes require a coordinated migration.
 
-The local `phase-1-environments` preview supports appearance and arm variants, with an optional app-supplied `decide` callback and `arm` props on Expo placement/state components. See the [resolution and decision contract](packages/sdk-core/README.md#appearance-and-arm-variants). The [CLI](packages/cli/README.md) preserves these declarations during code generation and sync; `adopt` preserves compact catalog placement lines and skips essential icon, splash, mark, logo, and brand images.
+Since 0.4.0-preview.1 the SDKs resolve appearance and arm variants, with an optional app-supplied `decide` callback and `arm` props on Expo placement/state components, and accept staging configurations and pinned signing key sets. See the [resolution and decision contract](packages/sdk-core/README.md#appearance-and-arm-variants). The [CLI](packages/cli/README.md) preserves these declarations during code generation and sync; `adopt` preserves compact catalog placement lines and skips essential icon, splash, mark, logo, and brand images.
 
 ## Audit an existing app
 
@@ -92,4 +93,4 @@ npm run verify
 npm run pack:release
 ```
 
-Verification builds the core, runs its signed-delivery tests and the local audit tests, and typechecks the Expo adapter. Packing writes two tarballs and SHA-256 checksums into `release/`; it does not publish to npm or GitHub. See [CONTRIBUTING](CONTRIBUTING.md) and [SECURITY](SECURITY.md).
+Verification builds the core, runs the core, Expo, audit, and CLI tests, typechecks the Expo adapter, and checks the CLI entry point. Packing writes four tarballs (core, Expo, audit, and CLI) and their SHA-256 checksums into `release/`; it does not publish to npm or GitHub. GitHub releases attach the core, Expo, and CLI tarballs; the audit is published to npm. See [CONTRIBUTING](CONTRIBUTING.md) and [SECURITY](SECURITY.md).

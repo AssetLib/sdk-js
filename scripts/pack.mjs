@@ -16,4 +16,4 @@ for (const name of ['sdk-core', 'sdk-expo', 'audit', 'cli']) {
   console.log(`${pack.filename}: ${bytes.length} bytes`);
 }
 await writeFile(path.join(output, 'SHA256SUMS'), sums.join('\n') + '\n');
-console.log('Release tarballs and SHA256SUMS are in release/. Nothing was published; see each package README for the npm publish step.');
+console.log('Release tarballs and SHA256SUMS are in release/. Nothing was published. The SDK and CLI tarballs are attached to a GitHub release; only @assetlib/audit is published to npm (see packages/audit/README.md).');

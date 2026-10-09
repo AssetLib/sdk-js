@@ -74,16 +74,16 @@ Catalog, codegen and CLI:
 
 ## Releases and versions
 
-- SDK release: the tag is `v<root version>` (for example `v0.4.0-preview.1`, a GitHub pre-release), with the core, Expo and CLI tarballs and `SHA256SUMS` attached. These version strings must change together:
+- SDK release: the tag is `v<root version>` (for example `v0.4.0-preview.1`, a GitHub pre-release), with the core, Expo and CLI tarballs and `SHA256SUMS` attached. These version strings must change together. `packages/sdk-core/test/release-versions.test.mjs` and the telemetry tests fail when one is missed:
   - the root `package.json`
   - `packages/sdk-core/package.json`
   - `packages/sdk-expo/package.json`, both its version and its exact `@assetlib/sdk-core` dependency
   - `package-lock.json`, by running `npm install`
-  - the default telemetry SDK versions in `packages/sdk-core/src/telemetry.ts` and `packages/sdk-expo/src/telemetry.ts`, plus their test assertions
+  - the default telemetry SDK versions in `packages/sdk-core/src/telemetry.ts` and `packages/sdk-expo/src/telemetry.ts` (their tests compare them with each package's `package.json`)
   - the version in the Expo README's observations section
-  - the two tarball URLs in the root README's install section
+  - the release download URLs: the core and Expo tarballs and the CLI tarball name in the root README, and the CLI tarball in the CLI README's install section
   - the supported version in `SECURITY.md`
-- `npm run pack:release` writes `release/assetlib-<package>-<version>.tgz` for all four packages, plus `release/SHA256SUMS`. It publishes nothing.
+- `npm run pack:release` writes `release/assetlib-<package>-<version>.tgz` for all four packages, plus `release/SHA256SUMS`. It publishes nothing. That `SHA256SUMS` lists the audit tarball too; the v0.4.0-preview.1 release attached it without the audit tarball, so `shasum -c` on that release's downloads reports the audit file missing.
 - The SDK and CLI packages are not on the npm registry (as of 2026-10-09). Only `@assetlib/audit` is. Maintainers publish it with `npm publish --workspace @assetlib/audit` after `npm run verify`.
 - An audit release bumps `packages/audit/package.json`. The pinned `npx -y @assetlib/audit@<version>` string must change at the same time in `README.md`, `packages/audit/README.md`, the help text in `packages/audit/bin/assetlib-audit.mjs`, `agent-kit/INSTALL.md` and `agent-kit/skills/assetlib-audit/SKILL.md`, and in AssetLib/agent-plugins. Check with `git grep -n '@assetlib/audit@'`. Keep `agent-kit/skills/assetlib-audit/` identical to the plugin copy.
 
