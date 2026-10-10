@@ -1,6 +1,6 @@
 {
   "name": "@assetlib/sdk-expo",
-  "version": "0.4.1-preview.1",
+  "version": "0.5.0-preview.1",
   "license": "MIT",
   "type": "module",
   "main": "./src/index.tsx",
@@ -19,7 +19,7 @@
     "test": "node --test test/*.test.mjs"
   },
   "dependencies": {
-    "@assetlib/sdk-core": "0.4.1-preview.1"
+    "@assetlib/sdk-core": "0.5.0-preview.1"
   },
   "peerDependencies": {
     "expo": ">=57 <58",

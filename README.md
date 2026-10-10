@@ -25,12 +25,12 @@ Use both exact tarball URLs from the matching GitHub release. The core package i
 
 ```sh
 npm install \
-  https://github.com/AssetLib/sdk-js/releases/download/v0.4.1-preview.1/assetlib-sdk-core-0.4.1-preview.1.tgz \
-  https://github.com/AssetLib/sdk-js/releases/download/v0.4.1-preview.1/assetlib-sdk-expo-0.4.1-preview.1.tgz
+  https://github.com/AssetLib/sdk-js/releases/download/v0.5.0-preview.1/assetlib-sdk-core-0.5.0-preview.1.tgz \
+  https://github.com/AssetLib/sdk-js/releases/download/v0.5.0-preview.1/assetlib-sdk-expo-0.5.0-preview.1.tgz
 npx expo install expo-file-system expo-image
 ```
 
-The preview targets Expo 57, React Native 0.86, and React 19. Pin the installed versions in your application's lockfile. Check `SHA256SUMS` attached to the release when reviewing downloaded artifacts. The same release attaches the `assetlib` CLI as `assetlib-cli-0.1.1.tgz`; see the [CLI install steps](packages/cli/README.md#install).
+The preview targets Expo 57, React Native 0.86, and React 19. Pin the installed versions in your application's lockfile. Check `SHA256SUMS` attached to the release when reviewing downloaded artifacts. The same release attaches the `assetlib` CLI as `assetlib-cli-0.2.0.tgz`; see the [CLI install steps](packages/cli/README.md#install).
 
 ## Connect one artwork placement
 

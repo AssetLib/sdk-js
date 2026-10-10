@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.5.0-preview.1 — October 10, 2026
+
+- `@assetlib/cli` 0.2.0.
 
 - Tintable icons, following the Assetlib tintable icon contract. A catalog placement may declare `"rendering": "template"` (or `original`, the default). Both codegen copies add `rendering: 'template'` to the generated reference only for template placements and reject any other value; catalogs without the field generate byte-identical output, and `assetlib sync` registers the field with the catalog.
 - `@assetlib/sdk-core`: signed descriptors (placements, state members, variant cells and catalog page images) may carry `rendering`. A malformed value (null, a non-string, or anything not matching `^[a-z][a-z0-9-]{0,31}$`) rejects the release. A reference's rendering must equal the selected descriptor's (absent means `original`); a mismatch or a well-formed unknown value skips that descriptor like an incompatible size, with no cache read or download, and resolution continues with older retained cache and then the bundled fallback (`fallbackReason: 'missing'`). `AssetRef` gains `rendering?: 'template'` and `ResolvedAsset` gains `rendering`. The shared contract corpus adds 15 manifest cases and 10 rendering cases.
