@@ -15,7 +15,7 @@ npx -y @assetlib/audit@0.1.0 /path/to/your-app --assets public --references src
 npx -y @assetlib/audit@0.1.0 /path/to/your-app --long-edge 2048 --max-files 500
 ```
 
-The first run downloads the package and its one dependency from the npm registry. **The audit itself has no network calls, telemetry, account, upload, transforms, deletion, or source rewrites.** Reports go to stdout. If you choose shell redirection to save a report, use a destination that will not overwrite an existing file.
+The first run downloads the package and its one dependency from the npm registry. **The audit itself has no network calls, telemetry, account, upload, transforms, deletion, or source rewrites.** Reports go to stdout; the text report escapes control characters in file names. If you choose shell redirection to save a report, use a destination that will not overwrite an existing file.
 
 From a clone of this repository instead:
 
@@ -43,6 +43,31 @@ Exit status `0` means the declared scope completed; `2` means coverage is partia
 **No match does not mean unused.** Generated identifiers, dynamic paths, resource catalogs, Android resource names, Swift asset symbols, density variants, remote configuration, generated files, and older shipped binaries can all preserve a real dependency. Comments and unrelated strings can produce false matches. Different directories with the same basename can match the same literal. This first version is a generic raster audit, not a framework-aware migration tool.
 
 Dimensions are extracted by [`image-size`](https://codeberg.org/image-size/image-size). Header parsing does not prove that the entire image can be decoded. Width and height describe encoded pixels before JPEG EXIF orientation. PDFs, SVG, GIF, HEIC/AVIF, fonts, video, app icons in container formats, and compiled resource archives are outside this version's scope.
+
+## Change history
+
+Added after 0.1.0 and not yet on npm. Until the next audit release, run it from a clone of this repository:
+
+```sh
+node packages/audit/bin/assetlib-audit.mjs /path/to/your-app --assets assets --history
+node packages/audit/bin/assetlib-audit.mjs /path/to/your-app --history-days 180 --json
+```
+
+`--history` (or `history: true` in the API) answers how often the app's artwork actually changes. It runs local `git log` in the audit root and counts changes on the first-parent line of the checked-out commit: a merge commit counts once with everything it brought in, while a rebased or fast-forwarded pull request counts once per commit. A change counts when it added, modified, or deleted an in-scope image file, including images that no longer exist. In scope means the `--assets` selection and the same hidden and ignored-directory rules as the inventory. History counts more formats than the inventory: PNG, JPEG, WebP, SVG, PDF inside an asset-catalog `.imageset`, and Lottie (`.lottie`, or `.json` under a path that names `lottie`, `animation`, or `anim`). It does not count GIF, HEIC, AVIF, or Android vector drawable XML. The window is `--history-days` long (default 365, at most 3650) and ends at the checked-out commit's date, not today's, so the same checkout gives the same report. Every first-parent commit is checked against the window by its committer date, so a commit with a wrong clock neither hides older changes nor pulls in changes dated after the checked-out commit. In a shallow clone whose history ends inside the window, the cut-off commit itself is not counted, because git cannot tell what it changed. Changes inside a git submodule belong to that submodule's repository and are not counted; a submodule in scope makes history partial, and its images get `history: null`.
+
+Copies of one image count as one image: every file in an asset-catalog set (`.imageset`, `.appiconset`, `.symbolset`, `.dataset` and similar), Android density and night variants under `drawable-*` or `mipmap-*`, `@2x`/`@3x` and `~ipad` suffixes, and Flutter `2.0x`/`3.0x` folders. A logical image is named by its path without those suffixes and without the extension, for example `Assets.xcassets/Hero.imageset` or `app/src/main/res/drawable/bg_welcome`.
+
+Each image is sorted by path conventions into one of three kinds:
+
+- `appIconsLaunchAndStore`: app icon sets (`.appiconset`, Icon Composer `.icon`, Android `mipmap` and `ic_launcher`, alternate app icons), launch and splash screens, favicons, an Expo-style `icon` file, and store screenshots or packaging art.
+- `iconsAndLogos`: SF Symbol sets, Android `ic_` resources, images in directories such as `icons`, `tab-icons`, `Symbols.xcassets`, `emoji`, `flags` or `logos`, and names that end in `icon`, contain `icon` or `icons` as a word separated by `-` or `_` (`tab_icon_home`, `icons-cart`, but not `iconHome`), or contain `logo` or `wordmark` anywhere.
+- `artwork`: everything else. An icon named for what it shows (`box`, `gear`) lands here, and artwork named with `logo`, `wordmark`, or `icon` as above lands in `iconsAndLogos`. Checked against 1,750 hand-labeled changes in 42 open-source apps, these rules kept 94% of artwork changes in `artwork` and moved 56% of icon and logo changes and 86% of app-icon and launch changes out of it.
+
+The `history` object reports `changesUnderRoot` (changes that touched anything under the audit root), `imageChanges` and `imageOnlyChanges` (no other file under the root changed, except asset-catalog `Contents.json` files), then for each kind: `changes`, `imageOnlyChanges`, `images` (distinct logical images), `fileChanges`, `maxImagesInOneChange` (how large changes were, such as a restyle of a whole set), `monthsWithChanges`, and `changesByMonth`. It also reports `fileChangesByFormat` (`raster`, `vector`, `animation`) and `mostChangedArtwork`, the 20 artwork images changed most often. Each PNG, JPEG, or WebP asset in the inventory gains `history.changes` and `history.lastChanged` for that file. Auditing a subdirectory such as `apps/mobile` counts only changes under it.
+
+This is churn in source control. It does not show what users saw, and it does not say whether a change could have shipped without an app release: a change that also edited code can still be an artwork swap, and an image-only change can still be a cleanup. Work that people wanted but skipped never reaches git.
+
+History reads commit times, changed paths, and the directory and submodule paths at the checked-out commit, never commit messages, authors, hashes or object IDs, or file contents. Git is found through absolute `PATH` entries that are outside the audited checkout and outside any `node_modules` (which `npx` and `npm exec` put on `PATH`), so a `git` binary in the checkout, its dependencies, or the current directory is never run. Paths from git are matched to files on disk the way that checkout's git matches them (`core.ignorecase`, `core.precomposeunicode`), and asset-catalog folders above the audit root still count. Every git call passes `--no-lazy-fetch`, so a partial clone missing trees reports `history_git_log_failed` instead of fetching; a git older than 2.44 does not know that option and gets `history_git_too_old`. Inherited `GIT_*` variables are ignored, the root commit is always included whatever `log.showRoot` says, and signature checks, pagers, external diffs, and fsmonitor are turned off so repository configuration cannot run programs. Defaults: 20,000 changes under the audit root and 64 MiB of git output (ceilings 200,000 and 512 MiB, set with `maxHistoryCommits` and `maxHistoryBytes` in the API). A directory outside a git work tree, a repository without commits, a shallow clone whose first-parent history ends inside the window (a default depth-1 CI checkout, for example; fetch with `--shallow-since` before the window start instead), or a reached limit reports partial coverage with a `history_*` issue and exit status `2`. When history could not be measured at all (`git_unavailable`, `git_too_old` for git older than 2.44, `not_a_git_work_tree`, `no_commits`, `invalid_commit_date` for a commit date JavaScript cannot represent, or a failed or oversized `git log`), its counts and each asset's `history` are `null`, not zero. When the submodule check fails, each asset's `history` is `null`. History needs git 2.44 or later.
 
 ## Bounds and exclusions
 
@@ -77,7 +102,7 @@ const report = await auditAssets('/path/to/app', {
 npm test --workspace @assetlib/audit
 ```
 
-Tests create synthetic PNG artwork in temporary directories and remove the fixtures afterwards. They check evidence, duplicates, scoped reference locations, partial coverage, symlinks, deterministic output, CLI exit codes, and preservation of audited files. The CLI is an early local tool; it is not a hosted Assetlib service or an installable mobile SDK.
+Tests create synthetic PNG artwork and git repositories with fixed commit dates in temporary directories and remove the fixtures afterwards. They check evidence, duplicates, scoped reference locations, partial coverage, symlinks, deterministic output, history counts and limits, that history ignores inherited git variables, never runs the repository's signature program or a git binary from the current directory, and never fetches in a partial clone, CLI exit codes, and preservation of audited files. The CLI is an early local tool; it is not a hosted Assetlib service or an installable mobile SDK.
 
 ## Releasing
 

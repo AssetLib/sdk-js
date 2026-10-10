@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- `@assetlib/audit`: opt-in change history. `--history` (or `history: true`) runs local, read-only `git log` and counts first-parent changes that added, modified, or deleted an in-scope PNG, JPEG, WebP, SVG, asset-catalog PDF, or Lottie file, with every commit's date checked against a window ending at the checked-out commit's date (`--history-days`, default 365). Density and dark-mode copies of one image count once, and images are sorted by path conventions into artwork, icons and logos, and app icons with launch and store art. The report gains a `history` object (per kind: changes, image-only changes, distinct images, file changes, the largest change, changes by month; file changes by format; the 20 most changed artwork images) and `history.changes`/`lastChanged` on each inventoried asset. It reads commit times, changed paths, and submodule paths only, never messages, authors, hashes, or file contents. Git is found through absolute `PATH` entries outside the audited checkout and outside any `node_modules`; every call passes `--no-lazy-fetch`, so history needs git 2.44 or later and never fetches in a partial clone; inherited `GIT_*` variables are ignored; and signature checks, pagers, external diffs, and fsmonitor are off so repository configuration cannot run programs. A missing repository, a shallow clone whose history ends inside the window, a submodule in scope, or a history limit reports partial coverage (exit 2); history that could not be measured reports `null` counts. A shallow clone's cut-off commit is not counted, the commit limit counts only changes under the audit root, and the text report escapes control characters in file names. Not yet published to npm: `@assetlib/audit@0.1.0` does not have it.
+
 ## 0.5.1-preview.1 — October 10, 2026
 
 - `@assetlib/cli` 0.3.0. `@assetlib/sdk-core` and `@assetlib/sdk-expo` change only their version.
