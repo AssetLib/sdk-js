@@ -82,7 +82,7 @@ Catalog, codegen and CLI:
   - `package-lock.json`, by running `npm install`
   - the default telemetry SDK versions in `packages/sdk-core/src/telemetry.ts` and `packages/sdk-expo/src/telemetry.ts` (their tests compare them with each package's `package.json`)
   - the version in the Expo README's observations section
-  - the release download URLs: the core and Expo tarballs and the CLI tarball name in the root README, and the CLI tarball in the CLI README's install section
+  - the release download URLs: the core and Expo tarballs and the CLI tarball name in the root README, and the CLI tarball in the CLI README's install section. Outside this repository, the console's Settings › Connect snippet pins the CLI tarball too (`cliTarball` in AssetLib/console `src/components/panels/sdk-connection.tsx`); update it in the same release
   - the supported version in `SECURITY.md`
 - `npm run pack:release` writes `release/assetlib-<package>-<version>.tgz` for all four packages, plus `release/SHA256SUMS`. It publishes nothing. That `SHA256SUMS` lists the audit tarball too; the v0.4.0-preview.1 release attached it without the audit tarball, so `shasum -c` on that release's downloads reports the audit file missing.
 - The SDK and CLI packages are not on the npm registry (as of 2026-10-09). Only `@assetlib/audit` is. Maintainers publish it with `npm publish --workspace @assetlib/audit` after `npm run verify`.
