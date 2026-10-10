@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { main } from '../src/cli.mjs';
-import { checkPublicConfig } from '../src/init.mjs';
+import { checkPublicConfig, syncWorkflow } from '../src/init.mjs';
 
 const org = '11111111-1111-4111-8111-111111111111', app = '22222222-2222-4222-8222-222222222222';
 const config = (overrides = {}) => ({ schemaVersion: 1, orgId: org, appId: app, environment: 'production', manifestUrl: `https://console.example.com/api/delivery/${org}/${app}/environments/production/manifest`, pinnedPublicKey: '-----BEGIN PUBLIC KEY-----\nTEST_ONLY\n-----END PUBLIC KEY-----\n', ...overrides });
@@ -70,9 +70,10 @@ test('init --apply writes the plan once and then refuses to run again', async t 
   assert.match(home, /<Image source=\{require\('\.\.\/assets\/app-icon\.png'\)\} \/>/, 'essential images stay untouched');
   const workflow = await p.get('.github/workflows/assetlib-sync.yml');
   assert.match(workflow, /ASSETLIB_TOKEN: \$\{\{ secrets\.ASSETLIB_TOKEN \}\}/);
-  assert.match(workflow, new RegExp(`ASSETLIB_CONSOLE: https://console\\.example\\.com\\n\\s+ASSETLIB_ORG: ${org}\\n\\s+ASSETLIB_APP: ${app}`));
+  assert.match(workflow, new RegExp(`ASSETLIB_CONSOLE: 'https://console\\.example\\.com'\\n\\s+ASSETLIB_ORG: '${org}'\\n\\s+ASSETLIB_APP: '${app}'`));
   assert.match(workflow, /node \.\/node_modules\/@assetlib\/cli\/bin\/assetlib\.mjs sync --catalog assetlib\.catalog\.json --platform expo/);
-  assert.match(workflow, /--app-version "\$\(node -p "require\('\.\/app\.json'\)\.expo\.version"\)" --build-number "\$\{\{ github\.run_number \}\}" --references "src"/);
+  assert.match(workflow, /--app-version "\$APP_VERSION" --build-number "\$BUILD_NUMBER" --references 'src'/);
+  assert.match(workflow, /run: echo "version=\$\(node -p "require\('\.\/app\.json'\)\.expo\.version"\)" >> "\$GITHUB_OUTPUT"/);
   assert.doesNotMatch(workflow, /npx|npm install|PUBLIC KEY/, 'the CLI runs from the installed package and no key is copied into CI');
   const again = await p.run([], false);
   assert.equal(again.code, 1);
@@ -131,7 +132,7 @@ test('an existing public config is kept: a matching copy is not rewritten and a 
   await p.put('assetlib.public.json', JSON.stringify(config({ environment: 'staging', manifestUrl: `https://console.example.com/api/delivery/${org}/${app}/environments/staging/manifest` })));
   assert.match((await p.run(['--config', p.configFile], false)).stderr, /already exists with different contents/);
   const fromFile = await p.run([]);
-  assert.match(fromFile.report.files.find(file => file.path === '.github/workflows/assetlib-sync.yml').diff, new RegExp(`ASSETLIB_ORG: ${org}`), 'an existing config fills in the workflow');
+  assert.match(fromFile.report.files.find(file => file.path === '.github/workflows/assetlib-sync.yml').diff, new RegExp(`ASSETLIB_ORG: '${org}'`), 'an existing config fills in the workflow');
 });
 
 test('--ci none skips the workflow; an existing workflow is left alone; no config falls back to repository variables', async t => {
@@ -154,4 +155,57 @@ test('checkPublicConfig accepts the legacy production route and a pinned key set
   assert.equal(checkPublicConfig(config({ pinnedPublicKey: undefined, pinnedPublicKeys: ['a', 'b'] })).appId, app);
   assert.throws(() => checkPublicConfig(config({ environment: 'staging', manifestUrl: `https://console.example.com/api/delivery/${org}/${app}/manifest` })), /does not match/);
   assert.equal(checkPublicConfig(config({ manifestUrl: `http://127.0.0.1:3100/api/delivery/${org}/${app}/environments/production/manifest` })).origin, 'http://127.0.0.1:3100');
+});
+
+test('the workflow keeps the token to one step: pinned actions, no stored credentials, no install scripts, no expressions in scripts', async t => {
+  const p = await project(t);
+  const workflow = (await p.run(['--config', p.configFile])).report.files.find(file => file.path === '.github/workflows/assetlib-sync.yml').diff.split('\n').map(line => line.slice(1)).join('\n');
+  assert.match(workflow, /uses: actions\/checkout@[0-9a-f]{40} # v\d/);
+  assert.match(workflow, /uses: actions\/setup-node@[0-9a-f]{40} # v\d/);
+  assert.match(workflow, /persist-credentials: false/);
+  assert.match(workflow, /run: npm ci --ignore-scripts/);
+  assert.equal((workflow.match(/secrets\.ASSETLIB_TOKEN/g) ?? []).length, 1, 'only the sync step sees the token');
+  const scripts = [...workflow.matchAll(/run: \|\n((?: {10}.*\n?)+)|run: (.*)/g)].map(match => match[1] ?? match[2]);
+  assert.ok(scripts.length >= 3);
+  for (const script of scripts) assert.doesNotMatch(script, /\$\{\{/, 'no GitHub expression is expanded inside a shell script');
+});
+
+test('init refuses source folders it cannot quote safely and never writes through a symlink', async t => {
+  const p = await project(t);
+  await mkdir(path.join(p.root, 'src $(touch pwned)'), { recursive: true });
+  const unsafe = await p.run(['--src', path.join(p.root, 'src $(touch pwned)'), '--apply'], false);
+  assert.equal(unsafe.code, 1);
+  assert.match(unsafe.stderr, /cannot be written into the workflow/);
+  const outside = await mkdtemp(path.join(tmpdir(), 'assetlib-init-outside-'));
+  t.after(() => rm(outside, { recursive: true, force: true }));
+  await symlink(outside, path.join(p.root, '.github'));
+  const linked = await p.run(['--config', p.configFile, '--apply'], false);
+  assert.equal(linked.code, 1);
+  assert.match(linked.stderr, /will not write \.github\/workflows\/assetlib-sync\.yml through a symlink/);
+  assert.deepEqual(await readdir(outside), [], 'nothing is written outside the project');
+  assert.ok(!(await p.files()).includes('assetlib.catalog.json'), 'a refused init writes nothing');
+});
+
+test('a loopback public config is never written into CI', async t => {
+  const p = await project(t);
+  await writeFile(p.configFile, JSON.stringify(config({ manifestUrl: `http://127.0.0.1:3100/api/delivery/${org}/${app}/environments/production/manifest` })));
+  const { report } = await p.run(['--config', p.configFile]);
+  const workflow = report.files.find(file => file.path === '.github/workflows/assetlib-sync.yml').diff;
+  assert.match(workflow, /ASSETLIB_CONSOLE: \$\{\{ vars\.ASSETLIB_CONSOLE \}\}/);
+  assert.doesNotMatch(workflow, /127\.0\.0\.1/);
+  assert.ok(report.notes.some(note => note.includes('not on an HTTPS console')));
+});
+
+test('syncWorkflow rejects values that could escape their quotes', () => {
+  const ok = { console: 'https://console.example.com', orgId: org, appId: app, srcDirectories: ['src'], appVersionFile: 'app.json' };
+  assert.match(syncWorkflow(ok), /--references 'src'/);
+  for (const [change, message] of [
+    [{ console: "https://x.example'; curl evil" }, /HTTPS origin/],
+    [{ orgId: "1' || true" }, /UUIDs/],
+    [{ srcDirectories: ["src'"] }, /cannot be written/],
+    [{ srcDirectories: ['../outside'] }, /cannot be written/],
+    [{ srcDirectories: ['src\nrun: evil'] }, /cannot be written/],
+    [{ appVersionFile: 'app.config.js' }, /app\.json or package\.json/],
+  ]) assert.throws(() => syncWorkflow({ ...ok, ...change }), message);
+  assert.match(syncWorkflow({ ...ok, srcDirectories: ['.', 'app/screens'] }), /--references '\.' --references 'app\/screens'/);
 });

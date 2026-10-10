@@ -1,11 +1,17 @@
 import { lstat, mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { adopt } from './adopt.mjs';
+import { adopt, safeDestination } from './adopt.mjs';
 
 const UUID = /^[a-fA-F0-9]{8}-(?:[a-fA-F0-9]{4}-){3}[a-fA-F0-9]{12}$/;
 const slash = value => value.split(path.sep).join('/');
 const CONFIG_FILE = 'assetlib.public.json';
 const WORKFLOW_FILE = '.github/workflows/assetlib-sync.yml';
+// Values written into the workflow are limited to characters that cannot end a quoted YAML or shell string.
+const SAFE_DIRECTORY = /^(?:[A-Za-z0-9_-][A-Za-z0-9._-]*|\.)(?:\/[A-Za-z0-9_-][A-Za-z0-9._-]*)*$/;
+const SAFE_ORIGIN = /^https:\/\/[a-z0-9.-]+(?::[0-9]{1,5})?$/;
+// Pinned to the commits sdk-js's own CI uses; update them together.
+const CHECKOUT = 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1';
+const SETUP_NODE = 'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0';
 
 async function exists(file) {
   try { await lstat(file); return true; } catch (error) { if (error.code === 'ENOENT') return false; throw error; }
@@ -34,12 +40,18 @@ export function checkPublicConfig(config) {
   return { origin: url.origin, orgId: config.orgId, appId: config.appId, environment: config.environment };
 }
 
-/* The workflow pins nothing it cannot read from the repository: the token stays a GitHub secret, the console and IDs
-   come from the public config when one was given, and the CLI runs from the installed @assetlib/cli package, never by
-   a bare npm name. */
-export function syncWorkflow({ console: origin, orgId, appId, srcDirectories, appVersion }) {
-  const value = (known, variable) => known ?? `\${{ vars.${variable} }}`;
-  const references = srcDirectories.map(dir => ` --references ${JSON.stringify(dir)}`).join('');
+/* The workflow keeps the token to one step: actions are pinned to commits, checkout keeps no credentials, install
+   scripts stay off, and the CLI runs from the installed @assetlib/cli package's entry file, never by a bare npm name.
+   No \${{ }} expression appears inside a shell script; values reach it as environment variables, and every literal is
+   validated and single-quoted. */
+export function syncWorkflow({ console: origin, orgId, appId, srcDirectories, appVersionFile }) {
+  if (origin !== undefined && !SAFE_ORIGIN.test(origin)) throw new Error('The workflow console origin must be an HTTPS origin.');
+  for (const id of [orgId, appId]) if (id !== undefined && !UUID.test(id)) throw new Error('The workflow IDs must be UUIDs.');
+  for (const dir of srcDirectories) if (!SAFE_DIRECTORY.test(dir) || dir.split('/').includes('..')) throw new Error(`--src ${JSON.stringify(dir)} cannot be written into the workflow: use letters, digits, '.', '_', '-' and '/'.`);
+  if (!['app.json', 'package.json'].includes(appVersionFile)) throw new Error('The app version comes from app.json or package.json.');
+  const value = (known, variable) => known === undefined ? `\${{ vars.${variable} }}` : `'${known}'`;
+  const references = srcDirectories.map(dir => ` --references '${dir}'`).join('');
+  const version = appVersionFile === 'app.json' ? "require('./app.json').expo.version" : "require('./package.json').version";
   return `# Registers assetlib.catalog.json with Assetlib on every push to main (written by assetlib init).
 # Add the ASSETLIB_TOKEN repository secret: a token with the Declare scope from Settings > Tokens in the console.
 name: Assetlib sync
@@ -53,20 +65,28 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: ${CHECKOUT}
+        with:
+          persist-credentials: false
+      - uses: ${SETUP_NODE}
         with:
           node-version: 22
-      - run: npm ci
+      # Dependency install scripts stay off: this job needs none, and the step after next holds the token.
+      - run: npm ci --ignore-scripts
+      - name: Read the app version
+        id: app
+        run: echo "version=$(node -p "${version}")" >> "$GITHUB_OUTPUT"
       - name: Register placements
         env:
           ASSETLIB_TOKEN: \${{ secrets.ASSETLIB_TOKEN }}
           ASSETLIB_CONSOLE: ${value(origin, 'ASSETLIB_CONSOLE')}
           ASSETLIB_ORG: ${value(orgId, 'ASSETLIB_ORG')}
           ASSETLIB_APP: ${value(appId, 'ASSETLIB_APP')}
+          APP_VERSION: \${{ steps.app.outputs.version }}
+          BUILD_NUMBER: \${{ github.run_number }}
         run: |
           node ./node_modules/@assetlib/cli/bin/assetlib.mjs sync --catalog assetlib.catalog.json --platform expo \\
-            --app-version "${appVersion}" --build-number "\${{ github.run_number }}"${references}
+            --app-version "$APP_VERSION" --build-number "$BUILD_NUMBER"${references}
 `;
 }
 
@@ -87,11 +107,14 @@ export async function init({ root: requestedRoot, src, images, config: configOpt
   for (const dir of sourceDirs) if (!(await exists(dir))) throw new Error(`--src directory not found: ${slash(path.relative(root, dir)) || '.'}`);
 
   const notes = [], extras = [];
+  // Every file init writes itself must resolve inside the project without a symlink anywhere on its path.
+  const writable = async file => { try { await safeDestination(root, file); } catch { throw new Error(`init will not write ${slash(path.relative(root, file))} through a symlink or onto a non-file.`); } };
   let target = null;
   if (configOption) {
     const { text, value } = await readJson(path.resolve(configOption), 4096, '--config');
     target = checkPublicConfig(value);
     const destination = path.join(root, CONFIG_FILE);
+    await writable(destination);
     if (path.resolve(configOption) !== destination) {
       if (await exists(destination)) {
         if ((await readFile(destination, 'utf8')) !== text) throw new Error(`${CONFIG_FILE} already exists with different contents.`);
@@ -105,12 +128,15 @@ export async function init({ root: requestedRoot, src, images, config: configOpt
 
   if (ci === 'github') {
     const workflow = path.join(root, WORKFLOW_FILE);
+    await writable(workflow);
     if (await exists(workflow)) notes.push(`${WORKFLOW_FILE} already exists and was left unchanged.`);
     else {
-      let appVersion = '$(node -p "require(\'./package.json\').version")';
-      try { if ((await readJson(path.join(root, 'app.json'), 1024 * 1024, 'app.json')).value?.expo?.version) appVersion = '$(node -p "require(\'./app.json\').expo.version")'; } catch { /* app.config.js or no app.json: package.json carries the version. */ }
-      extras.push({ file: workflow, text: syncWorkflow({ console: target?.origin, orgId: target?.orgId, appId: target?.appId, srcDirectories: sourceDirs.map(dir => slash(path.relative(root, dir)) || '.'), appVersion }) });
-      if (!target) notes.push(`The workflow reads ASSETLIB_CONSOLE, ASSETLIB_ORG and ASSETLIB_APP from repository variables until a public config is given.`);
+      let appVersionFile = 'package.json';
+      try { if ((await readJson(path.join(root, 'app.json'), 1024 * 1024, 'app.json')).value?.expo?.version) appVersionFile = 'app.json'; } catch { /* app.config.js or no app.json: package.json carries the version. */ }
+      // CI never sends the token to a non-HTTPS console; a loopback config leaves the console to a repository variable.
+      const ciTarget = target?.origin.startsWith('https://') ? target : null;
+      extras.push({ file: workflow, text: syncWorkflow({ console: ciTarget?.origin, orgId: ciTarget?.orgId, appId: ciTarget?.appId, srcDirectories: sourceDirs.map(dir => slash(path.relative(root, dir)) || '.'), appVersionFile }) });
+      if (!ciTarget) notes.push(`The workflow reads ASSETLIB_CONSOLE, ASSETLIB_ORG and ASSETLIB_APP from repository variables${target ? ' because the public config is not on an HTTPS console' : ' until a public config is given'}.`);
     }
   }
 
@@ -123,9 +149,9 @@ export async function init({ root: requestedRoot, src, images, config: configOpt
   if (!preview.summary.candidates) { report.files = []; return report; }
 
   if (apply) {
-    for (const item of extras) if (await exists(item.file)) throw new Error(`${slash(path.relative(root, item.file))} appeared during init; rerun the command.`);
+    for (const item of extras) { await writable(item.file); if (await exists(item.file)) throw new Error(`${slash(path.relative(root, item.file))} appeared during init; rerun the command.`); }
     report.adoption = await adopt({ ...options, apply: true });
-    for (const item of extras) { await mkdir(path.dirname(item.file), { recursive: true }); await writeFile(item.file, item.text, { flag: 'wx' }); }
+    for (const item of extras) { await mkdir(path.dirname(item.file), { recursive: true }); await writable(item.file); await writeFile(item.file, item.text, { flag: 'wx' }); }
   }
   report.next = [
     'Install @assetlib/sdk-core, @assetlib/sdk-expo and @assetlib/cli from the same GitHub release as this CLI (see the CLI README). They are not on npm: never install them by name.',

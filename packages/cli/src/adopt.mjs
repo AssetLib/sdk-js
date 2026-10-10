@@ -39,7 +39,7 @@ async function readBounded(root, file, limit) {
   } finally { await handle.close(); }
 }
 
-async function safeDestination(root, file) {
+export async function safeDestination(root, file) {
   if (!contained(root, file)) throw new Error('Adopt output paths must stay inside the catalog directory.');
   let ancestor = file;
   while (true) {
