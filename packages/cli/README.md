@@ -4,10 +4,10 @@ Set up an Expo app's integration, register a checked-in Assetlib catalog with th
 
 ## Install
 
-The CLI is not on the npm registry. Install the exact tarball attached to a GitHub release of this repository; release `v0.5.0-preview.1` ships `@assetlib/cli` 0.2.0:
+The CLI is not on the npm registry. Install the exact tarball attached to a GitHub release of this repository; release `v0.5.1-preview.1` ships `@assetlib/cli` 0.3.0:
 
 ```sh
-npm install --save-dev https://github.com/AssetLib/sdk-js/releases/download/v0.5.0-preview.1/assetlib-cli-0.2.0.tgz
+npm install --save-dev https://github.com/AssetLib/sdk-js/releases/download/v0.5.1-preview.1/assetlib-cli-0.3.0.tgz
 node ./node_modules/@assetlib/cli/bin/assetlib.mjs --help
 ```
 
