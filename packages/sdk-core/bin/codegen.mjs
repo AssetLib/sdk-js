@@ -23,6 +23,7 @@ try {
         if ('arm' in variants && (!Array.isArray(variants.arm) || variants.arm.length < 1 || variants.arm.length > 4 || new Set(variants.arm).size !== variants.arm.length || variants.arm.some(value => typeof value !== 'string' || value !== value.trim() || !/^[a-z][a-z0-9_-]{0,19}$/.test(value) || ['control', 'any', 'constructor', 'prototype', '__proto__'].includes(value)))) throw new Error('Variants arm requires 1–4 unique valid arm names.');
       }
       if (placement.states !== undefined && (!Array.isArray(placement.states) || placement.states.length < 2 || placement.states.length > 16 || new Set(placement.states).size !== placement.states.length || placement.states.some(value => typeof value !== 'string' || !/^[a-z][a-z0-9_-]{0,39}$/.test(value) || ['constructor', 'prototype', '__proto__'].includes(value)))) throw new Error('State sets require 2–16 unique named states.');
+      if ('rendering' in placement && placement.rendering !== 'original' && placement.rendering !== 'template') throw new Error(`Placement ${placement.key} rendering must be "original" or "template".`);
       if ('bundledAccessibility' in placement) validateAccessibility(placement.bundledAccessibility);
       if ('bundledStateAccessibility' in placement) {
         if (!placement.states || !placement.bundledStateAccessibility || typeof placement.bundledStateAccessibility !== 'object' || Array.isArray(placement.bundledStateAccessibility)) throw new Error('Bundled state descriptions require a state set.');
@@ -38,7 +39,7 @@ try {
       }
       const leaf = placement.symbol.at(-1);
       if (Object.hasOwn(node, leaf)) throw new Error('Catalog symbols overlap.');
-      node[leaf] = { key: placement.key, width: placement.width, height: placement.height, ...(placement.states ? { states: placement.states } : {}), ...(placement.variants ? { variants: placement.variants } : {}), ...(placement.bundledAccessibility ? { bundledAccessibility: placement.bundledAccessibility } : {}), ...(placement.bundledStateAccessibility ? { bundledStateAccessibility: placement.bundledStateAccessibility } : {}) };
+      node[leaf] = { key: placement.key, width: placement.width, height: placement.height, ...(placement.rendering === 'template' ? { rendering: 'template' } : {}), ...(placement.states ? { states: placement.states } : {}), ...(placement.variants ? { variants: placement.variants } : {}), ...(placement.bundledAccessibility ? { bundledAccessibility: placement.bundledAccessibility } : {}), ...(placement.bundledStateAccessibility ? { bundledStateAccessibility: placement.bundledStateAccessibility } : {}) };
     }
     console.log('// Generated from the checked-in Assetlib catalog. Regenerate instead of editing.\n// No network dependency during compilation.\nexport const AppAssets = ' + JSON.stringify(tree, null, 2) + ' as const;\n');
   }

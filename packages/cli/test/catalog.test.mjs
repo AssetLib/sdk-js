@@ -116,3 +116,41 @@ test('catalog validation rejects malformed catalogs, placements, states, symbols
   await assert.rejects(readCatalog(file), /128 KiB/);
   await assert.rejects(readCatalog(path.dirname(file)), /regular file/);
 });
+
+test('catalogs without rendering generate the same bytes as before the field existed', async t => {
+  const golden = '// Generated from the checked-in Assetlib catalog. Regenerate instead of editing.\n// No network dependency during compilation.\nexport const AppAssets = {\n  "Travel": {\n    "coast": {\n      "key": "travel.coast",\n      "width": 1200,\n      "height": 900\n    }\n  },\n  "Tasks": {\n    "garden": {\n      "key": "tasks.garden",\n      "width": 600,\n      "height": 400,\n      "states": [\n        "empty",\n        "growing",\n        "complete"\n      ]\n    }\n  }\n} as const;\n\n';
+  assert.equal(generateCatalog(input), golden);
+  const explicit = structuredClone(input);
+  for (const placement of explicit.placements) placement.rendering = 'original';
+  assert.equal(generateCatalog(explicit), golden, 'original is the default and is not emitted');
+  const file = await fixture(t);
+  const existing = fileURLToPath(new URL('../../sdk-core/bin/codegen.mjs', import.meta.url));
+  for (const catalog of [input, explicit]) {
+    await writeFile(file, JSON.stringify(catalog));
+    assert.equal(execFileSync(process.execPath, [existing, file], { encoding: 'utf8' }), golden);
+  }
+});
+
+test('both codegens carry template rendering into the reference and reject other values', async t => {
+  const file = await fixture(t);
+  const existing = fileURLToPath(new URL('../../sdk-core/bin/codegen.mjs', import.meta.url));
+  const catalog = structuredClone(input);
+  catalog.placements[0].rendering = 'template';
+  catalog.placements[1].rendering = 'template';
+  await writeFile(file, JSON.stringify(catalog));
+  const output = generateCatalog(await readCatalog(file));
+  assert.equal(output, execFileSync(process.execPath, [existing, file], { encoding: 'utf8' }));
+  const generated = JSON.parse(output.split('export const AppAssets = ')[1].split(' as const;')[0]);
+  assert.deepEqual(generated.Travel.coast, { key: 'travel.coast', width: 1200, height: 900, rendering: 'template' });
+  assert.deepEqual(generated.Tasks.garden, { key: 'tasks.garden', width: 600, height: 400, rendering: 'template', states: ['empty', 'growing', 'complete'] });
+  for (const rendering of [null, '', 'Template', 'palette', 1, true, ['template'], {}]) {
+    const invalid = structuredClone(input);
+    invalid.placements[0].rendering = rendering;
+    await writeFile(file, JSON.stringify(invalid));
+    assert.throws(() => generateCatalog(invalid), /travel\.coast rendering must be "original" or "template"/);
+    await assert.rejects(readCatalog(file), /rendering/);
+    const result = spawnSync(process.execPath, [existing, file], { encoding: 'utf8' });
+    assert.equal(result.status, 1, JSON.stringify(rendering));
+    assert.match(result.stderr, /travel\.coast rendering must be "original" or "template"/);
+  }
+});
