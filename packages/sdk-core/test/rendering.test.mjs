@@ -26,17 +26,18 @@ const templateIcon = { ...icon, rendering: 'template' };
 
 function harness(manifest, initialAssets = []) {
   const storage = createMemoryStorage();
-  let active = manifest;
+  let active = manifest, offline = false;
   const requests = [];
   const ready = Promise.all(initialAssets.map(([key, body]) => storage.putAsset(key, body)));
   const fetch = async url => {
     await ready;
     requests.push(url);
+    if (offline) throw new Error('Fixture network is offline.');
     if (url === config.manifestUrl) return new Response(JSON.stringify(active));
     const body = url.endsWith(assets.coast.assetId) ? coast : url.endsWith(assets.ridge.assetId) ? ridge : null;
     return body ? new Response(body) : new Response(null, { status: 404 });
   };
-  return { client: new AssetClient(config, { storage, fetch }), requests, setManifest(value) { active = value; } };
+  return { client: new AssetClient(config, { storage, fetch }), requests, setManifest(value) { active = value; }, setOffline(value) { offline = value; } };
 }
 
 test('state members carry their own rendering and validate', () => {
@@ -92,13 +93,15 @@ test('the rule applies to retained releases and cached bytes', async () => {
   assert.equal(hit.source, 'cache');
   assert.equal(hit.rendering, 'template');
 
-  // Release 10's dark cell is original, so a template reference skips it and
-  // uses release 9's matching descriptor from the cache, never downloading for it.
+  // Like an incompatible size: release 10's dark cell is original, so a template
+  // reference skips it and uses release 9's matching descriptor from the cache,
+  // offline, with no download.
   const h = harness(template);
   await h.client.refresh();
   assert.equal((await h.client.resolve(templateIcon, { appearance: 'dark' })).source, 'remote');
   h.setManifest(mismatch);
   assert.deepEqual(await h.client.refresh(), { updated: true, sequence: 10 });
+  h.setOffline(true);
   const before = h.requests.length;
   const retained = await h.client.resolve(templateIcon, { appearance: 'dark' });
   assert.equal(retained.source, 'cache');
