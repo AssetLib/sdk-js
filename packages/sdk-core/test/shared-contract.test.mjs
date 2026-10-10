@@ -382,3 +382,46 @@ test('shared vector rendition is selected only when the client opts into SVG', a
   assert.equal(result.bytes.byteLength, renditions.vector.bytes);
   assert.equal(h.requests[1].url, new URL(renditions.vector.url, config.manifestUrl).href);
 });
+
+// Tintable icons: the reference's rendering (absent = original) must equal the
+// selected descriptor's (absent = original). Anything else is bundled, with no download.
+const rendering = await json('rendering.json');
+assert.ok(Array.isArray(rendering.cases) && rendering.cases.length > 0, 'The corpus must include rendering checks.');
+for (const [index, item] of rendering.cases.entries()) {
+  test(`shared rendering ${index + 1}: ${item.manifest} ${JSON.stringify(item.ref)} ${JSON.stringify(item.request)} → ${item.expect}`, async () => {
+    const manifestCase = cases.manifests.find(value => value.file === item.manifest);
+    assert.equal(manifestCase?.verification, 'accept', 'Rendering cases require an indexed valid manifest.');
+    const caseConfig = configs[manifestCase.config ?? 'production'];
+    assert.ok(caseConfig);
+    const manifest = await json(item.manifest);
+    const { payload } = verifySignedManifest(manifest, caseConfig);
+    const h = harness({ manifest, clientConfig: caseConfig });
+    assert.deepEqual(await h.client.refresh(), { updated: true, sequence: payload.sequence });
+    const options = Object.hasOwn(item.request, 'appearance') ? { appearance: item.request.appearance } : {};
+    const result = await h.client.resolve(item.ref, options);
+    assert.ok(['remote', 'bundled'].includes(item.expect));
+    if (item.expect === 'bundled') {
+      assert.equal(result.source, 'bundle');
+      assert.equal(result.sequence, null);
+      assert.equal(result.fallbackReason, 'missing');
+      assert.equal(result.bytes, undefined);
+      assert.equal(result.rendering, undefined);
+      assert.deepEqual(h.requests.map(request => request.url), [caseConfig.manifestUrl], 'A rendering mismatch never downloads image bytes.');
+      return;
+    }
+    assert.equal(result.source, 'remote');
+    assert.equal(result.sequence, payload.sequence);
+    assert.equal(result.assetId, item.assetId);
+    assert.equal(result.rendering, item.ref.rendering ?? 'original');
+    const asset = Object.values(assets).find(value => value.assetId === item.assetId);
+    assert.ok(asset, 'Expected artwork must be a known fixture asset.');
+    assert.equal(result.sha256, asset.sha256);
+    assert.deepEqual(Buffer.from(result.bytes), await bytes(asset.file));
+    assert.equal(h.requests.length, 2, 'Each resolution fetches one manifest and the selected artwork.');
+  });
+}
+test('every malformed rendering manifest in the shared corpus is rejected', () => {
+  const malformed = cases.manifests.filter(item => item.file.startsWith('manifests/invalid/rendering-'));
+  assert.ok(malformed.length >= 10);
+  for (const item of malformed) assert.equal(item.verification, 'reject', item.file);
+});

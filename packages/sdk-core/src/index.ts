@@ -2,7 +2,7 @@ import { ed25519 } from '@noble/curves/ed25519.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 import { base64 } from '@scure/base';
-import type { AssetlibConfig, AssetMime, AssetRef, AssetStatus, AssetPage, AssetPageOptions, AssetPagePayload, ArmSource, CachePolicy, StorageMime, CatalogAsset, DynamicAssetRef, FallbackReason, StateSetRef, ResolvedStateSet, ManifestSlot, ClientOptions, ClientStatus, ManifestPayload, RefreshResult, ResolvedAsset, ResolvedAnimation, ResolveOptions, SignedManifest } from './types.js';
+import type { AssetlibConfig, AssetMime, AssetRef, AssetRendering, AssetStatus, AssetPage, AssetPageOptions, AssetPagePayload, ArmSource, CachePolicy, StorageMime, CatalogAsset, DynamicAssetRef, FallbackReason, StateSetRef, ResolvedStateSet, ManifestSlot, ClientOptions, ClientStatus, ManifestPayload, RefreshResult, ResolvedAsset, ResolvedAnimation, ResolveOptions, SignedManifest } from './types.js';
 import { ObservationReporter } from './telemetry.js';
 export type * from './types.js';
 import { selectAssetCandidates, supportedFormats, targetPixels, validRenditionHeader, validateRenditions, type AssetCandidate } from './renditions.js';
@@ -11,7 +11,7 @@ import { validateAnimationExtension, verifiedAnimationData } from './animations.
 export { validateLottie, validateLottieMetadata, LOTTIE_LIMITS } from './lottie.js';
 export type { LottieMetadata, ValidatedLottie } from './lottie.js';
 export { selectCatalogReferences } from './catalog.js';
-import { assetIdPattern, catalogForSequence, validateAssetPage, validateDeliveryExtensions, validStateRef } from './delivery.js';
+import { assetIdPattern, catalogForSequence, validateAssetPage, validateDeliveryExtensions, validateRendering, validStateRef } from './delivery.js';
 import { validateAccessibility } from './accessibility.js';
 export { resolveAccessibilityDescription, validateAccessibility } from './accessibility.js';
 
@@ -101,6 +101,7 @@ export function verifySignedManifest(input: unknown, config: AssetlibConfig): { 
     validateRenditions(payload, value, config);
     validateAnimationExtension(payload, value, config);
     if ('accessibility' in value) validateAccessibility(value.accessibility);
+    validateRendering(value);
     keys.add(value.key);
   }
   validateDeliveryExtensions(payload, config);
@@ -112,6 +113,10 @@ const throwIfAborted = (signal?: AbortSignal): void => { if (signal?.aborted) th
 const cachePolicy = (policy: unknown): CachePolicy => { if (policy !== 'disk' && policy !== 'memory' && policy !== 'none') throw new Error('Unknown image cache policy.'); return policy; };
 const validateAppearance = (appearance: unknown): void => { if (appearance !== undefined && appearance !== 'light' && appearance !== 'dark') throw new Error('Unknown artwork appearance.'); };
 const validateArm = (arm: unknown): void => { if (arm !== undefined && typeof arm !== 'string') throw new Error('Artwork arm must be a string.'); };
+const referenceRendering = (ref: AssetRef): AssetRendering => {
+  if (ref.rendering !== undefined && ref.rendering !== 'template') throw new Error('Invalid generated asset reference.');
+  return ref.rendering ?? 'original';
+};
 
 function variantSlot(slot: ManifestSlot, arm: string | undefined, appearance: ResolveOptions['appearance']): { slot: ManifestSlot; arm: string | null; appearance?: ResolveOptions['appearance'] } {
   const find = (selectedArm: string | undefined, selectedAppearance: ResolveOptions['appearance']) => slot.cells?.find(value => value.arm === selectedArm && value.appearance === selectedAppearance);
@@ -365,9 +370,12 @@ export class AssetClient {
     }
     return { history, decision, matches };
   }
-  private async resolveDescriptor(slot: ManifestSlot, sequence: number, download: boolean, options: ResolveOptions): Promise<ResolvedAsset> {
+  private async resolveDescriptor(slot: ManifestSlot, sequence: number, download: boolean, options: ResolveOptions, rendering: AssetRendering): Promise<ResolvedAsset> {
     validateAppearance(options.appearance);
     const policy = cachePolicy(options.cachePolicy ?? this.policy);
+    // Rendering is part of the placement contract, like its size: a mismatch or
+    // an unknown value is incompatible, so neither the cache nor the network is used.
+    if ((slot.rendering ?? 'original') !== rendering) return { source: 'bundle', sequence: null, arm: null, armSource: 'control', cachePolicy: policy, message: 'The published artwork rendering does not match this reference.', fallbackReason: 'missing' };
     const target = targetPixels(slot, options);
     let message = 'No compatible image bytes are available.';
     let fallbackReason: FallbackReason = 'missing';
@@ -377,7 +385,7 @@ export class AssetClient {
       const cacheKey = options.arm !== undefined && options.arm !== 'control'
         ? hashBytes(utf8ToBytes(JSON.stringify(['arm', options.arm, options.appearance ?? null, candidate.sha256])))
         : options.appearance === undefined ? candidate.sha256 : hashBytes(utf8ToBytes(`appearance:${options.appearance}:${candidate.sha256}`));
-      const identity = { arm: null, armSource: 'control' as const, mime: candidate.mime, sha256: candidate.sha256, cacheKey, assetId: slot.assetId, cachePolicy: policy,
+      const identity = { arm: null, armSource: 'control' as const, mime: candidate.mime, sha256: candidate.sha256, cacheKey, assetId: slot.assetId, cachePolicy: policy, rendering,
         ...(slot.accessibility ? { accessibility: Object.freeze({ defaultLocale: slot.accessibility.defaultLocale, descriptions: Object.freeze({ ...slot.accessibility.descriptions }) }) } : {}),
         ...(candidate.isRendition ? { pixelWidth: candidate.width, pixelHeight: candidate.height } : {}) };
       try {
@@ -399,6 +407,7 @@ export class AssetClient {
   async resolve(ref: AssetRef, options: ResolveOptions = {}): Promise<ResolvedAsset> {
     if (!validKey(ref.key) || !integer(ref.width, 1, 8192) || !integer(ref.height, 1, 8192)) throw new Error('Invalid generated asset reference.');
     if (ref.bundledAccessibility !== undefined) validateAccessibility(ref.bundledAccessibility);
+    const rendering = referenceRendering(ref);
     validateAppearance(options.appearance);
     validateArm(options.arm);
     targetPixels(ref, options); cachePolicy(options.cachePolicy ?? this.policy); throwIfAborted(options.signal);
@@ -411,7 +420,7 @@ export class AssetClient {
       const slot = payload.slots.find(matches);
       if (!slot) continue;
       const selected = variantSlot(slot, decision.arm, options.appearance);
-      const result = await this.resolveDescriptor(selected.slot, payload.sequence, index === 0, resolvedOptions);
+      const result = await this.resolveDescriptor(selected.slot, payload.sequence, index === 0, resolvedOptions, rendering);
       if (result.source !== 'bundle') return this.observed(ref, { ...result, arm: selected.arm, ...(selected.appearance ? { appearance: selected.appearance } : {}), armSource: decision.armSource, message: decisionMessage(index ? `Using verified artwork from release ${payload.sequence}. ${message}` : result.message, decision) });
       if (index === 0 || reason === 'missing') reason = result.fallbackReason ?? 'other';
       message = result.message;
@@ -421,6 +430,7 @@ export class AssetClient {
   }
   async resolveStateSet(ref: StateSetRef, options: ResolveOptions = {}): Promise<ResolvedStateSet> {
     if (!validKey(ref.key) || !integer(ref.width, 1, 8192) || !integer(ref.height, 1, 8192) || !validStateRef(ref.states)) throw new Error('Invalid state set reference.');
+    const rendering = referenceRendering(ref);
     validateAppearance(options.appearance);
     validateArm(options.arm);
     targetPixels(ref, options); cachePolicy(options.cachePolicy ?? this.policy); throwIfAborted(options.signal);
@@ -435,7 +445,7 @@ export class AssetClient {
       if (!slot?.states || Object.keys(slot.states).length !== ref.states.length || ref.states.some(name => !Object.hasOwn(slot.states!, name))) continue;
       const entries = await Promise.all(ref.states.map(async name => {
         // Optional metadata and renditions belong to this state, never to the default image.
-        const result = await this.resolveDescriptor({ ...slot.states![name], key: slot.key, screen: slot.screen, width: slot.width, height: slot.height }, payload.sequence, index === 0, resolvedOptions);
+        const result = await this.resolveDescriptor({ ...slot.states![name], key: slot.key, screen: slot.screen, width: slot.width, height: slot.height }, payload.sequence, index === 0, resolvedOptions, rendering);
         return [name, { ...result, arm: selected!.arm, ...(selected!.appearance ? { appearance: selected!.appearance } : {}), armSource: decision.armSource, message: decisionMessage(result.message, decision) }] as const;
       }));
       throwIfAborted(options.signal);
@@ -478,7 +488,7 @@ export class AssetClient {
     const entry = this.handles.get(ref);
     if (!entry) throw new Error("Use an image reference returned by this client's verified catalog.");
     // Immutable, verified page handles pin their content revision for the feed's lifetime.
-    return this.resolveDescriptor({ ...entry.descriptor, key: entry.descriptor.assetId, screen: '' }, entry.sequence, true, options);
+    return this.resolveDescriptor({ ...entry.descriptor, key: entry.descriptor.assetId, screen: '' }, entry.sequence, true, options, 'original');
   }
   /** Explicit opt-in. Image resolution never downloads an animation. */
   async resolveAnimation(ref: AssetRef, options: ResolveOptions = {}): Promise<ResolvedAnimation> {

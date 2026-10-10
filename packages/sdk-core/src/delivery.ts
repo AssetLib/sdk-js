@@ -7,12 +7,18 @@ const record = (value: unknown): value is Record<string, unknown> => !!value && 
 const integer = (value: unknown, min: number, max: number): value is number => Number.isSafeInteger(value) && Number(value) >= min && Number(value) <= max;
 export const assetIdPattern = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 
+/** A malformed rendering rejects the release. A well-formed unknown value is resolved as incompatible, per descriptor. */
+export function validateRendering(value: Record<string, unknown>): void {
+  if ('rendering' in value && (typeof value.rendering !== 'string' || !/^[a-z][a-z0-9-]{0,31}$/.test(value.rendering))) throw new Error('Invalid image rendering.');
+}
+
 export function validateDescriptor(value: unknown, width: number, height: number, config: AssetlibConfig, renditionSchemaVersion?: unknown): void {
   if (!record(value) || typeof value.assetId !== 'string' || !assetIdPattern.test(value.assetId) || typeof value.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(value.sha256) || value.mime !== 'image/webp' || !integer(value.bytes, 1, 8 * 1024 * 1024) || typeof value.url !== 'string') throw new Error('Invalid image descriptor.');
   const url = new URL(value.url, config.manifestUrl);
   if (url.origin !== new URL(config.manifestUrl).origin || url.username || url.password || url.search || url.hash || url.pathname !== `/api/delivery/${config.orgId}/${config.appId}/assets/${value.assetId}`) throw new Error('Image descriptor URL is outside the configured app.');
   validateRenditions(renditionSchemaVersion === undefined ? {} : { renditionSchemaVersion }, { ...value, width, height }, config);
   if ('accessibility' in value) validateAccessibility(value.accessibility);
+  validateRendering(value);
 }
 
 function validateStateImages(states: Record<string, unknown>, slot: Record<string, unknown>, config: AssetlibConfig, renditionSchemaVersion: unknown): void {

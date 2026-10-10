@@ -1,4 +1,4 @@
-import type { AssetlibConfig, AssetMime, AssetRef, AssetRendition, ManifestSlot, ResolveOptions } from './types.js';
+import type { AssetlibConfig, AssetMime, AssetRendition, ManifestSlot, ResolveOptions } from './types.js';
 
 const integer = (value: unknown, min: number, max: number): value is number => Number.isSafeInteger(value) && Number(value) >= min && Number(value) <= max;
 const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
@@ -26,7 +26,7 @@ export function supportedFormats(formats: readonly AssetMime[] = ['image/webp', 
   return Object.freeze([...formats]);
 }
 
-export function targetPixels(ref: AssetRef, options: ResolveOptions): { width: number; height: number } {
+export function targetPixels(ref: { width: number; height: number }, options: ResolveOptions): { width: number; height: number } {
   if (!record(options)) throw new Error('Invalid rendition target.');
   if (options.pixelWidth === undefined && options.pixelHeight === undefined) return { width: ref.width, height: ref.height };
   if (!integer(options.pixelWidth, 1, 8192) || !integer(options.pixelHeight, 1, 8192)) throw new Error('Supply both target pixel dimensions as integers between 1 and 8192.');

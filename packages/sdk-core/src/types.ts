@@ -2,7 +2,9 @@ export type AssetlibConfig = { schemaVersion: 1; orgId: string; appId: string; e
 export type AssetAccessibility = { readonly defaultLocale: string; readonly descriptions: Readonly<Record<string, string>> };
 export type Appearance = 'light' | 'dark';
 export type AssetVariants = { readonly appearance?: readonly Appearance[]; readonly arm?: readonly string[] };
-export type AssetRef = { readonly key: string; readonly width: number; readonly height: number; readonly variants?: AssetVariants; readonly bundledAccessibility?: AssetAccessibility };
+/** How the app draws the artwork. `template` is a single-color shape the app tints; absent means `original`. */
+export type AssetRendering = 'original' | 'template';
+export type AssetRef = { readonly key: string; readonly width: number; readonly height: number; readonly rendering?: 'template'; readonly variants?: AssetVariants; readonly bundledAccessibility?: AssetAccessibility };
 export type StateSetRef = AssetRef & { readonly states: readonly string[]; readonly bundledStateAccessibility?: Readonly<Record<string, AssetAccessibility>> };
 export type CachePolicy = 'disk' | 'memory' | 'none';
 /** Issued by this client's verified asset page; plain objects are not trusted handles. */
@@ -12,7 +14,7 @@ export type AssetStatus = { source: 'bundle' | 'cache' | 'remote'; sequence: num
 export type AssetMime = 'image/webp' | 'image/png' | 'image/svg+xml';
 /** Cache transport MIME types; animation is never an image format candidate. */
 export type StorageMime = AssetMime | 'application/json';
-export type ResolvedAsset = AssetStatus & { bytes?: Uint8Array; mime?: AssetMime; pixelWidth?: number; pixelHeight?: number; cachePolicy?: CachePolicy; /** Storage identity, including requested arm and appearance; sha256 remains the content hash. */ cacheKey?: string; accessibility?: AssetAccessibility };
+export type ResolvedAsset = AssetStatus & { bytes?: Uint8Array; mime?: AssetMime; pixelWidth?: number; pixelHeight?: number; cachePolicy?: CachePolicy; /** Storage identity, including requested arm and appearance; sha256 remains the content hash. */ cacheKey?: string; accessibility?: AssetAccessibility; /** Rendering of the delivered descriptor; omitted for bundled artwork. */ rendering?: AssetRendering };
 export type ResolvedStateSet = AssetStatus & { states: Readonly<Record<string, ResolvedAsset>> };
 export type AnimationDescriptor = { format: 'lottie'; profile: 'vector-v1'; mime: 'application/json'; sha256: string; url: string; bytes: number; width: number; height: number; frameRate: number; inPoint: number; outPoint: number };
 export type ResolvedAnimation = { source: 'poster'; sequence: null; message: string } | {
@@ -27,7 +29,8 @@ export type ClientStatus = { initialized: boolean; sequence: number; lastError: 
 export type RefreshResult = { updated: boolean; sequence: number; error?: string };
 export type SignedManifest = { algorithm: 'Ed25519'; keyId: string; publicKey: string; payload: string; signature: string };
 export type AssetRendition = { sha256: string; url: string; mime: AssetMime; bytes: number; width: number; height: number };
-export type AssetDescriptor = { assetId: string; sha256: string; url: string; mime: 'image/webp'; bytes: number; renditions?: AssetRendition[]; accessibility?: AssetAccessibility };
+/** `rendering` is absent for original artwork; a well-formed value this client does not know makes only that descriptor incompatible. */
+export type AssetDescriptor = { assetId: string; sha256: string; url: string; mime: 'image/webp'; bytes: number; renditions?: AssetRendition[]; accessibility?: AssetAccessibility; rendering?: string };
 export type ManifestCell = AssetDescriptor & { appearance?: Appearance; arm?: string; states?: Record<string, AssetDescriptor> };
 export type ManifestSlot = AssetDescriptor & { key: string; screen: string; width: number; height: number; animation?: AnimationDescriptor; states?: Record<string, AssetDescriptor>; defaultState?: string; variants?: AssetVariants; cells?: ManifestCell[] };
 export type CatalogAsset = AssetDescriptor & { width: number; height: number; name?: string };

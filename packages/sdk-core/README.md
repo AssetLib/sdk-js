@@ -20,7 +20,7 @@ const asset = await client.resolve(AppAssets.Travel.coast, { pixelWidth: 600, pi
 // source is 'remote', 'cache', or 'bundle'. Render a bundled image for 'bundle'.
 ```
 
-`refresh()` returns `{ updated, sequence, error? }`. Errors preserve the previous accepted release. `resolve()` returns `{ source, sequence, message, arm, armSource, bytes?, sha256?, assetId?, mime?, pixelWidth?, pixelHeight? }`. `getStatus()` returns `{ initialized, sequence, lastError }`. Use one long-lived client per configured app.
+`refresh()` returns `{ updated, sequence, error? }`. Errors preserve the previous accepted release. `resolve()` returns `{ source, sequence, message, arm, armSource, bytes?, sha256?, assetId?, mime?, pixelWidth?, pixelHeight?, rendering? }`. `getStatus()` returns `{ initialized, sequence, lastError }`. Use one long-lived client per configured app.
 
 Public config: `{ schemaVersion: 1, orgId, appId, environment: 'staging' | 'production', manifestUrl, pinnedPublicKey?, keyId?, pinnedPublicKeys?, keyIds? }`. Supply `pinnedPublicKey` or a `pinnedPublicKeys` array of 1–16 distinct exact-PEM Ed25519 SPKI public keys. Each PEM is limited to 256 UTF-8 bytes. When both are present, the single key must exactly match a member of the set. Configurations with only `pinnedPublicKey` retain their existing behavior and parsed shape.
 
@@ -91,6 +91,18 @@ Preview 0.2 accepts the optional signed `renditionSchemaVersion: 1` extension. E
 Selection uses the smallest rendition covering both dimensions, then byte size and hash. If every rendition is smaller, the largest is preferred. Failed candidates advance to the next candidate, then the legacy fallback. Historical releases remain cache-only. The result describes the actual selected MIME, hash and pixel dimensions. It does not convert one format into another on the device.
 
 A browser renderer can opt into normalized SVG with `formats: ['image/webp', 'image/png', 'image/svg+xml']`. SVG is then preferred. Generic/native clients should retain the raster defaults. The core validates signed metadata, hash, byte length and basic headers; adapters must decode images and verify dimensions before rendering. The Expo web adapter performs browser decoding, while the standalone Swift/Kotlin SDKs use native decoders.
+
+## Tintable icons
+
+A catalog placement can declare `"rendering": "template"`. Assetlib then delivers a single-color shape, and the app supplies the color when it draws it, for example from its theme or a selected state. Values are `original` (the default when absent) and `template`. Code generation adds `rendering: 'template'` to that placement's reference and omits the field otherwise, so catalogs without it generate the same output as before.
+
+```json
+{ "key": "tab.trips", "symbol": ["Tabs", "trips"], "width": 24, "height": 24, "rendering": "template" }
+```
+
+Signed image descriptors (placements, state members, variant cells and catalog page images) may carry `rendering`. A present value that is not a string matching `^[a-z][a-z0-9-]{0,31}$` rejects the release; absent means `original`. Resolution compares the reference's rendering with the descriptor actually selected after arm, appearance and state selection. If they differ, or the descriptor names a value this client does not know, that placement uses the bundled fallback with `fallbackReason: 'missing'`, as for an incompatible size: the cache is not read and nothing is downloaded. Retained releases follow the same rule, and other placements are unaffected. Catalog page images resolve as `original`. `ResolvedAsset.rendering` reports the delivered descriptor's rendering, `'original'` or `'template'`.
+
+The bundled fallback must also be a single-color shape, such as a PNG with alpha, because the app applies the same tint to remote and bundled artwork. Remote masks are rasters, so request physical pixels with `pixelWidth` and `pixelHeight` (logical size × display scale); the Expo adapter does this for template references. Template rendering needs this SDK and CLI or newer: older code generation drops the field, and older runtimes do not check it. Publishing template descriptors from the hosted console is planned; until then releases carry no `rendering` field.
 
 ## Offline typed references
 
@@ -212,7 +224,7 @@ npm test
 npm pack
 ```
 
-Tests include the shared cross-platform contract corpus (`test/fixtures/shared`, byte-identical with the Swift and Kotlin SDKs' copies: 100 signed manifest cases, 43 public config cases exercised as strings and objects, 18 appearance/arm resolution cases, staging configuration, stateful replay, byte-failure and rendition selection cases), separate JavaScript key-set fixtures for a second trusted signer and an untrusted signer, catalog subset requests, Lottie profile rejection/metadata verification, animation cache/offline/rollback/removal behavior, selection, PNG/SVG bytes and offline fallback, plus real Node Ed25519 signatures and bounded mock delivery streams. They cover signature and byte tampering, independent pins, replay across client restarts, corrupt storage, offline cache fallback, contract mismatch, URL boundaries, deadlines, and offline code generation. The npm pack contains built JavaScript and declarations; it does not require TypeScript compilation when installed.
+Tests include the shared cross-platform contract corpus (`test/fixtures/shared`, byte-identical with the Swift and Kotlin SDKs' copies: 115 signed manifest cases, 43 public config cases exercised as strings and objects, 18 appearance/arm resolution cases, 10 tintable icon rendering cases, staging configuration, stateful replay, byte-failure and rendition selection cases), separate JavaScript key-set fixtures for a second trusted signer and an untrusted signer, catalog subset requests, Lottie profile rejection/metadata verification, animation cache/offline/rollback/removal behavior, selection, PNG/SVG bytes and offline fallback, plus real Node Ed25519 signatures and bounded mock delivery streams. They cover signature and byte tampering, independent pins, replay across client restarts, corrupt storage, offline cache fallback, contract mismatch, URL boundaries, deadlines, and offline code generation. The npm pack contains built JavaScript and declarations; it does not require TypeScript compilation when installed.
 
 ## State sets, catalog pages, and cache policies
 
