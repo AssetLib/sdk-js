@@ -14,7 +14,7 @@ Copy the public SDK configuration from the console into a demo’s **Connect** s
 | --- | --- |
 | [`@assetlib/sdk-core`](packages/sdk-core) | Pinned Ed25519 manifest verification, SHA-256 image checks, durable sequence tracking, compatible cached fallback, local catalog code generation, signed PNG/WebP size selection, localized image descriptions |
 | [`@assetlib/sdk-expo`](packages/sdk-expo) | Expo 57 component, native file cache, web IndexedDB cache, `expo-image` rendering, browser-only opt-in SVG, per-usage accessibility modes |
-| [`@assetlib/cli`](packages/cli) | `assetlib sync` build and catalog registration, `hash`, `check` for generated references, and the dry-run-first `adopt` codemod |
+| [`@assetlib/cli`](packages/cli) | `assetlib init` to set up an Expo app, `assetlib sync` build and catalog registration, `hash`, `check` for generated references, and the dry-run-first `adopt` codemod |
 | [`@assetlib/audit`](packages/audit) | Read-only PNG/JPEG/WebP inventory, duplicate evidence, dimension candidates, optional literal-reference hints |
 
 Separate [Swift](https://github.com/AssetLib/sdk-swift) and [Kotlin](https://github.com/AssetLib/sdk-android) previews are available. The SDK and CLI packages are not on the npm registry; install them from the tarballs attached to a GitHub release. Only the read-only audit is published to npm, and its agent plugin lives in [AssetLib/agent-plugins](https://github.com/AssetLib/agent-plugins). This repository does not include a remote MCP server. SDK source and release tarballs are public; the hosted Assetlib console is a separate service.

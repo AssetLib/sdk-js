@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Public MIT repository `AssetLib/sdk-js`: the TypeScript and Expo SDKs for Assetlib signed artwork delivery, the `assetlib` CLI (`sync`, `hash`, `check`, `adopt`), and the read-only `@assetlib/audit`. Expo apps consume the SDKs as GitHub release tarballs (the public demo-travel and demo-todo apps vendor them). The `assetlib-audit` plugin in AssetLib/agent-plugins wraps the npm audit package. At runtime the SDK talks only to public delivery routes, and the CLI to the build-registration route of the hosted console (https://console.assetlib.dev). The sibling SDKs are AssetLib/sdk-swift and AssetLib/sdk-android.
+Public MIT repository `AssetLib/sdk-js`: the TypeScript and Expo SDKs for Assetlib signed artwork delivery, the `assetlib` CLI (`init`, `sync`, `hash`, `check`, `adopt`), and the read-only `@assetlib/audit`. Expo apps consume the SDKs as GitHub release tarballs (the public demo-travel and demo-todo apps vendor them). The `assetlib-audit` plugin in AssetLib/agent-plugins wraps the npm audit package. At runtime the SDK talks only to public delivery routes, and the CLI to the build-registration route of the hosted console (https://console.assetlib.dev). The sibling SDKs are AssetLib/sdk-swift and AssetLib/sdk-android.
 
 ## Commands
 
@@ -32,7 +32,7 @@ node packages/cli/bin/assetlib.mjs check --catalog assetlib.catalog.json --gener
 - `packages/sdk-core/`: `@assetlib/sdk-core`. `src/index.ts` holds config parsing, signature verification, durable state and resolution. `src/delivery.ts`, `renditions.ts`, `lottie.ts`, `accessibility.ts` and `telemetry.ts` hold the rest. `bin/codegen.mjs` is the `assetlib-codegen` bin.
 - `packages/sdk-core/test/fixtures/`: the JS signed corpus (`cases.json`, `SHA256SUMS`, `TEST_ONLY` keys) used by most core tests. `pinned-keys/` holds key-set fixtures that only the JS SDK uses. `shared/` is a byte-identical copy of the shared contract corpus that AssetLib/sdk-swift and AssetLib/sdk-android vendor, with its own `SHA256SUMS`; `test/shared-contract.test.mjs` runs all of it.
 - `packages/sdk-expo/`: `@assetlib/sdk-expo`, which ships TSX source with no build step. Metro chooses `src/platform.native.ts` or `src/platform.web.ts`.
-- `packages/cli/`: `@assetlib/cli`. `src/catalog.mjs` handles validation, the canonical hash and formatting, `src/adopt.mjs` is the codemod, and `src/references.mjs` and `src/detection.mjs` handle the reference scan and CI metadata.
+- `packages/cli/`: `@assetlib/cli`. `src/catalog.mjs` handles validation, the canonical hash and formatting, `src/adopt.mjs` is the codemod, `src/init.mjs` sets up an Expo app on top of it, and `src/references.mjs` and `src/detection.mjs` handle the reference scan and CI metadata.
 - `packages/audit/`: `@assetlib/audit`, the read-only image inventory.
 - `agent-kit/`: a checkout-local copy of the `assetlib-audit` skill.
 - `scripts/pack.mjs`: release packing. `dist/`, `release/` and `*.tgz` are gitignored outputs.
@@ -71,6 +71,7 @@ Catalog, codegen and CLI:
   - Essential images (`icon`, `splash`, `adaptive-icon`, `mark`, `logo`, `brand`, or an `icons/` directory) and images below `--min-edge` are skipped.
   - It keeps the original import and constant, preserves compact catalog lines, and never overwrites an existing client module. It never calls Git, makes network requests, or deletes images.
   - New patterns or skip reasons need tests in `packages/cli/test/adopt.test.mjs` and a row in the CLI README table.
+- `init` is a dry run unless `--apply`. It refuses an existing catalog, starts `adopt` from an empty one and writes nothing when no image can be adopted. It only creates files (catalog, generated references, client stub, `assetlib.public.json`, the sync workflow) apart from the call sites `adopt` rewrites, never overwrites an existing public config or workflow, and never calls Git or the network. The workflow runs the installed package's entry file and takes the token only from a repository secret. Tests are in `packages/cli/test/init.test.mjs`.
 - The audit stays read-only: no uploads, deletes, rewrites, network calls or telemetry. A reference with no match is "unresolved", never "unused".
 
 ## Releases and versions

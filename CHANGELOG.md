@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- `@assetlib/cli`: `assetlib init` sets up an Expo app that has no catalog yet. It adopts bundled images as `adopt` does but starts from no catalog and creates it, copies a checked public configuration to `assetlib.public.json`, and writes a GitHub Actions workflow that runs `assetlib sync` from the installed package with the token from a repository secret. It is a dry run unless `--apply`, refuses an existing catalog, writes nothing when no image can be adopted (exit 3), and never calls Git or the network. `--image` limits it to chosen images. Internally, the adopt planner can now start from a missing catalog and be limited to chosen images; the `adopt` command's behavior and output are unchanged.
+
 ## 0.5.0-preview.1 — October 10, 2026
 
 - `@assetlib/cli` 0.2.0.

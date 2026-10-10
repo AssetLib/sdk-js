@@ -1,6 +1,6 @@
 # @assetlib/cli
 
-Register a checked-in Assetlib catalog with the console from an application build, or adopt bundled Expo images into declared placements. Node.js 22 or newer. The CLI pins `typescript` 5.9.3 for AST parsing and `image-size` 2.0.4 for encoded image dimensions.
+Set up an Expo app's integration, register a checked-in Assetlib catalog with the console from an application build, or adopt bundled Expo images into declared placements. Node.js 22 or newer. The CLI pins `typescript` 5.9.3 for AST parsing and `image-size` 2.0.4 for encoded image dimensions.
 
 ## Install
 
@@ -18,6 +18,23 @@ Check the tarball against the release's `SHA256SUMS`, and pin it in your lockfil
 ```sh
 node packages/cli/bin/assetlib.mjs --help
 ```
+
+## Set up an Expo app
+
+`assetlib init` starts an Expo app's integration when it has no catalog yet. Run it from the app's root (or pass `--project <dir>`) with the public SDK configuration downloaded from Settings › Connect in the console:
+
+```sh
+node ./node_modules/@assetlib/cli/bin/assetlib.mjs init --config ~/Downloads/assetlib.config.json
+# Only after reviewing the plan:
+node ./node_modules/@assetlib/cli/bin/assetlib.mjs init --config ~/Downloads/assetlib.config.json --apply
+```
+
+- It is a dry run unless `--apply` is passed, and prints every file it would write as a diff. Commit first so the result is easy to review; undo it with Git.
+- It adopts bundled images exactly as `adopt` does (the same patterns, skip reasons, limits, `--min-edge`, `--generated` and `--client-import`), but starts without a catalog and creates `assetlib.catalog.json`, the generated references and a starter client. `--src <dir>` (repeatable) defaults to `src`. `--image <file>` (repeatable) limits it to the images you choose. A catalog needs at least one placement, so when nothing can be adopted it writes nothing and exits 3.
+- `--config` is checked (schema version 1, `staging` or `production`, UUID `orgId` and `appId`, a `manifestUrl` for that app and environment over HTTPS, and at least one pinned key) and copied byte for byte to `assetlib.public.json`, which the starter client loads. The SDK checks the keys fully when the app loads the config. The config pins the key your app trusts, so take it only from your own console. An existing identical `assetlib.public.json` is kept; a different one stops `init`. Without `--config`, an existing `assetlib.public.json` is used.
+- `--ci github` (the default) writes `.github/workflows/assetlib-sync.yml`. It runs `assetlib sync` from the installed package on every push to `main`, reads the token from the `ASSETLIB_TOKEN` repository secret, takes the console origin and IDs from the public config (or from the `ASSETLIB_CONSOLE`, `ASSETLIB_ORG` and `ASSETLIB_APP` repository variables when there is none), the app version from `app.json` (else `package.json`), and the build number from the workflow run. An existing workflow file is left unchanged. `--ci none` skips it.
+- It refuses to run when `assetlib.catalog.json` already exists (use `adopt`), needs `expo` in `package.json`, and, like `adopt`, never calls Git or the network.
+- It ends with the next steps: install the SDK packages from the same release, add the token secret, run a development build, and publish a change. Overview in the console ticks its setup checklist as the first sync, the first manifest request and the first update arrive.
 
 ## Commands
 
@@ -146,7 +163,7 @@ References are deduplicated and selected in sorted POSIX path order, up to 200 t
 | `0` | Completed successfully within the selected scope. |
 | `1` | Invalid arguments/catalog, stale generated file, network failure, rejected server response, or HTTP error. HTTP errors include the server message. |
 | `2` | Completed with a partial reference scan; inspect stderr for limits or unreadable paths. |
-| `3` | `adopt` found no new supported call sites. No files changed. |
+| `3` | `adopt` found no new supported call sites, or `init` found no image it could adopt. No files changed. |
 
 A request error takes precedence over the partial-scan exit code. Re-registering the same platform, app version, and build number replaces that build's declarations and references; created, existing, and conflicting placements are summarized. Conflicts are reported without changing the exit code by themselves.
 

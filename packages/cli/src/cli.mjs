@@ -5,8 +5,11 @@ import { generateCatalog } from './codegen.mjs';
 import { detectBuildMetadata } from './detection.mjs';
 import { scanReferences } from './references.mjs';
 import { adopt, formatAdoption } from './adopt.mjs';
+import { formatInit, init } from './init.mjs';
 
 const HELP = `Usage:
+  assetlib init [--project <dir>] [--src <dir>]... [--image <file>]... [--config <public-config.json>]
+    [--generated <path>] [--client-import "<module>#<export>"] [--min-edge <px>] [--ci github|none] [--apply] [--json]
   assetlib sync --catalog <path> --platform <ios|android|web|expo> --app-version <v> --build-number <n>
     [--references <dir|file>]... [--root <dir>] [--console <origin>] [--org <uuid>] [--app <uuid>]
     [--sdk-version <v>] [--allow-insecure-loopback] [--dry-run] [--json]
@@ -24,17 +27,18 @@ const optionsByCommand = {
   hash: ['catalog'],
   check: ['catalog', 'generated'],
   adopt: ['catalog', 'src', 'generated', 'client-import', 'min-edge', 'apply', 'json'],
+  init: ['project', 'src', 'image', 'config', 'generated', 'client-import', 'min-edge', 'ci', 'apply', 'json'],
 };
 
 function parseArgs(args) {
   const [command, ...rest] = args;
-  if (!optionsByCommand[command]) throw new Error('Expected sync, hash, check, or adopt. Use --help.');
-  const options = { references: [], src: [] };
+  if (!optionsByCommand[command]) throw new Error('Expected init, sync, hash, check, or adopt. Use --help.');
+  const options = { references: [], src: [], image: [] };
   for (let i = 0; i < rest.length; i++) {
     const match = /^--([^=]+)(?:=(.*))?$/.exec(rest[i]);
     if (!match || !optionsByCommand[command].includes(match[1])) throw new Error('Unknown option. Use --help. Token flags are not supported.');
     const [, name, inline] = match;
-    if (!['references', 'src'].includes(name) && Object.hasOwn(options, name)) throw new Error(`Duplicate --${name} option.`);
+    if (!['references', 'src', 'image'].includes(name) && Object.hasOwn(options, name)) throw new Error(`Duplicate --${name} option.`);
     if (['dry-run', 'apply', 'json', 'allow-insecure-loopback'].includes(name)) {
       if (inline !== undefined) throw new Error(`--${name} does not take a value.`);
       options[name] = true;
@@ -42,10 +46,10 @@ function parseArgs(args) {
     }
     const value = inline ?? rest[++i];
     if (!value || value.startsWith('--')) throw new Error(`--${name} requires a value.`);
-    if (['references', 'src'].includes(name)) options[name].push(value);
+    if (['references', 'src', 'image'].includes(name)) options[name].push(value);
     else options[name] = value;
   }
-  for (const name of ['catalog', ...(command === 'sync' ? ['platform', 'app-version', 'build-number'] : command === 'check' ? ['generated'] : [])]) {
+  for (const name of [...(command === 'init' ? [] : ['catalog']), ...(command === 'sync' ? ['platform', 'app-version', 'build-number'] : command === 'check' ? ['generated'] : [])]) {
     if (!options[name]) throw new Error(`--${name} is required.`);
   }
   return { command, options };
@@ -121,6 +125,17 @@ export async function main(args = process.argv.slice(2), env = process.env, io =
       write(HELP); return 0;
     }
     const { command, options } = parseArgs(args);
+    if (command === 'init') {
+      const project = path.resolve(options.project ?? '.');
+      const report = await init({
+        root: project, src: options.src.map(dir => path.resolve(dir)), images: options.image.map(file => path.resolve(file)),
+        config: options.config && path.resolve(options.config), generated: options.generated && path.resolve(options.generated),
+        clientImport: options['client-import'], minEdge: options['min-edge'] === undefined ? 64 : Number(options['min-edge']), ci: options.ci ?? 'github', apply: options.apply,
+      });
+      if (options.json) json(report);
+      else write(formatInit(report));
+      return report.adoption.summary.candidates ? 0 : 3;
+    }
     const catalogPath = path.resolve(options.catalog);
     const catalog = await readCatalog(catalogPath);
     if (command === 'adopt') {

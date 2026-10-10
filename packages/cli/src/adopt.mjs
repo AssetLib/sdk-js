@@ -250,7 +250,9 @@ function diff(file, before, after) {
 }
 
 /** Plan in memory first, then optionally write the fully validated plan. Never invokes Git or a network request. */
-export async function adopt({ catalogPath, catalog, src, generated: generatedOption, clientImport = './src/assetlib/client#client', minEdge = 64, apply = false }) {
+/* `images` limits adoption to those image files. `createCatalog` lets the catalog file not exist yet (assetlib init):
+   the plan then creates it, and only when at least one call site is adopted, since a catalog needs a placement. */
+export async function adopt({ catalogPath, catalog, src, generated: generatedOption, clientImport = './src/assetlib/client#client', minEdge = 64, apply = false, images, createCatalog = false }) {
   if (!Number.isSafeInteger(minEdge) || minEdge < 1 || minEdge > 8192) throw new Error('--min-edge must be an integer from 1 to 8192.');
   if (!src?.length) throw new Error('At least one --src directory is required.');
   const requestedRoot = path.dirname(path.resolve(catalogPath)), root = await realpath(requestedRoot);
@@ -279,6 +281,7 @@ export async function adopt({ catalogPath, catalog, src, generated: generatedOpt
   }
   const report = { mode: apply ? 'apply' : 'dry-run', summary: {}, candidates: [], skipped: [], collisions: [], issues: [], files: [], notes: ['Dimensions are encoded pixel sizes. Check @2x/@3x sources before accepting placement dimensions.'] };
   const files = await sourceFiles(root, src.map(value => normalize(path.resolve(value))), generated, report);
+  const only = images?.length ? new Map(images.map(value => [normalize(path.resolve(value)), value])) : null;
   const nextCatalog = structuredClone(catalog), originals = new Map(), sourcePlans = [], imageCache = new Map(), runKeys = new Map();
   let bytesRead = 0, imageBytesRead = 0, reused = 0;
   for (const file of files) {
@@ -302,6 +305,7 @@ export async function adopt({ catalogPath, catalog, src, generated: generatedOpt
       if (!argument.text.startsWith('./') && !argument.text.startsWith('../')) { skip('non-relative-path'); continue; }
       const image = path.resolve(path.dirname(file), argument.text);
       if (!contained(root, image)) { skip('image-outside-root'); continue; }
+      if (only && !only.has(image)) continue;
       if (/icon|splash|adaptive-icon|mark|logo|brand/i.test(path.basename(image)) || path.relative(root, image).split(path.sep).slice(0, -1).some(part => part.toLowerCase() === 'icons')) { skip('essential'); continue; }
       let size = imageCache.get(image);
       if (!size) {
@@ -353,10 +357,12 @@ export async function adopt({ catalogPath, catalog, src, generated: generatedOpt
     if (before !== after) plans.push({ file, before, after });
   }
   if (report.candidates.length) {
-    const originalCatalog = (await readBounded(root, catalogPath, 128 * 1024)).toString('utf8');
-    if (JSON.stringify(JSON.parse(originalCatalog)) !== JSON.stringify(catalog)) throw new Error('Catalog changed during adoption; rerun the command.');
-    originals.set(catalogPath, originalCatalog);
-    const catalogText = formatCatalog(nextCatalog, originalCatalog);
+    let originalCatalog = null;
+    try { originalCatalog = (await readBounded(root, catalogPath, 128 * 1024)).toString('utf8'); }
+    catch (error) { if (!createCatalog || error.code !== 'ENOENT') throw error; }
+    if (originalCatalog === null ? catalog.placements.length : JSON.stringify(JSON.parse(originalCatalog)) !== JSON.stringify(catalog)) throw new Error('Catalog changed during adoption; rerun the command.');
+    if (originalCatalog !== null) originals.set(catalogPath, originalCatalog);
+    const catalogText = originalCatalog === null ? JSON.stringify(nextCatalog, null, 2) + '\n' : formatCatalog(nextCatalog, originalCatalog);
     if (Buffer.byteLength(catalogText) > 128 * 1024) throw new Error('Updated catalog exceeds 128 KiB.');
     const generatedText = generateCatalog(nextCatalog);
     for (const source of sourcePlans) await plan(source.file, editSource(source.info, source.selected, generated, localClient ? relativeImport(source.file, clientBase) : clientSpecifier, clientExport));
@@ -368,6 +374,7 @@ export async function adopt({ catalogPath, catalog, src, generated: generatedOpt
       report.notes.push(`${apply ? 'Created' : 'Would create'} client stub: ${slash(path.relative(root, clientFile))}. Review the public config before running the app.`);
     }
   }
+  if (only) for (const [image, requested] of only) if (!report.candidates.some(item => path.resolve(root, item.image) === image)) report.notes.push(`No adoptable call site uses --image ${requested}.`);
   plans.sort((a, b) => compare(a.file, b.file));
   if (new Set(plans.map(item => item.file)).size !== plans.length) throw new Error('Adopt output paths overlap source edits.');
   if (apply) {
