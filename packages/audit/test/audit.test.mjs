@@ -97,6 +97,18 @@ test('skips symlinks, hidden entries, dependencies, and build directories', asyn
   await assert.rejects(auditAssets(path.join(root, 'linked-directory')), /real directory/);
 });
 
+test('matches ignored directory names case-insensitively without adding names', async t => {
+  const root = await fixture(t);
+  await put(root, 'assets/hero.png', png());
+  for (const dir of ['Vendor', 'NODE_MODULES', 'pods']) await put(root, `${dir}/ignored.png`, png());
+  await put(root, 'Vendored/kept.png', png());
+  const report = await auditAssets(root);
+  assert.deepEqual(report.assets.map(asset => asset.path), ['Vendored/kept.png', 'assets/hero.png']);
+  assert.equal(report.coverage.ignoredDirectories, 3);
+  assert.deepEqual(report.scope.ignoredDirectories, ['Build', 'Carthage', 'DerivedData', 'Pods', 'build', 'coverage', 'dist', 'graft', 'node_modules', 'out', 'target', 'vendor']);
+  await assert.rejects(auditAssets(root, { references: ['Vendor'] }), /excluded/);
+});
+
 test('image count and byte limits explicitly report partial coverage', async t => {
   const root = await fixture(t);
   await put(root, 'a.png', png()); await put(root, 'b.png', png());

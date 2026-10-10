@@ -53,6 +53,28 @@ test('finds literal keys and prefixed symbols while excluding dynamic and genera
   assert.equal(JSON.stringify(result).includes('DO_NOT_SEND_SOURCE'), false);
 });
 
+test('finds Swift AppArtwork accessors and artwork methods, and Kotlin AppAssets symbols', async t => {
+  const root = await fixture(t);
+  await put(root, 'ios/ElsewhereApp.swift', [
+    'let hero = session.artwork.travel.coast',
+    'let described = artwork.travel.coastArtwork(locale: locale, requireDescription: true)',
+    'let row = session.artwork.tasks.garden.resizable()',
+    'let longer = artwork.travel.coastline',
+    'let suffixed = artwork.travel.coastArtworks',
+    'let upperMethod = artwork.Travel.coastArtwork(locale: locale)',
+    'let lowerCatalog = AssetCatalog.travel.coast',
+    'let lowerAssets = AppAssets.travel.coast',
+    'let other = myartwork.travel.coast',
+  ].join('\n'));
+  await put(root, 'android/TravelModel.kt', 'val coast = image(AppAssets.Travel.coast)');
+  assert.deepEqual((await scan(root)).codeReferences, [
+    { key: 'travel.coast', path: 'android/TravelModel.kt', line: 1 },
+    { key: 'travel.coast', path: 'ios/ElsewhereApp.swift', line: 1 },
+    { key: 'travel.coast', path: 'ios/ElsewhereApp.swift', line: 2 },
+    { key: 'tasks.garden', path: 'ios/ElsewhereApp.swift', line: 3 },
+  ]);
+});
+
 test('uses globally sorted POSIX paths and deduplicates overlapping references', async t => {
   const root = await fixture(t);
   for (const file of ['a/z.ts', 'a.ts', 'a!next.ts', 'Z.swift', 'last.kt']) await put(root, file, '"travel.coast"');
@@ -77,6 +99,14 @@ test('skips audit exclusions, unsupported extensions, and symlinks without follo
   await assert.rejects(scan(root, [path.join(root, 'linked-directory')]), /symlinks/);
   await assert.rejects(scan(root, [path.join(root, 'linked-directory', 'secret.ts')]), /symlinks/);
   await assert.rejects(scan(root, [path.join(root, 'node_modules')]), /excluded/);
+});
+
+test('matches excluded directory names case-insensitively without excluding similar names', async t => {
+  const root = await fixture(t);
+  for (const directory of ['Vendor', 'NODE_MODULES', 'pods', 'deriveddata']) await put(root, `${directory}/hidden.swift`, '"travel.coast"');
+  await put(root, 'Vendored/visible.swift', '"tasks.garden"');
+  assert.deepEqual((await scan(root)).codeReferences, [{ key: 'tasks.garden', path: 'Vendored/visible.swift', line: 1 }]);
+  await assert.rejects(scan(root, [path.join(root, 'Vendor')]), /excluded/);
 });
 
 test('requires a common root and resolves explicit root and reference paths from cwd', async t => {

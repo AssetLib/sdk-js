@@ -5,6 +5,8 @@ import path from 'node:path';
 // Keep these scopes and budgets aligned with packages/audit/src/audit.mjs.
 const SOURCE_EXTENSIONS = new Set(['.swift', '.m', '.mm', '.h', '.kt', '.java', '.xml', '.dart', '.js', '.jsx', '.mjs', '.cjs', '.ts', '.tsx', '.json', '.html', '.css', '.scss']);
 const IGNORED_DIRECTORIES = new Set(['node_modules', 'vendor', 'Pods', 'Carthage', 'build', 'Build', 'dist', 'out', 'coverage', 'DerivedData', 'target', 'graft']);
+const IGNORED_DIRECTORY_NAMES = new Set([...IGNORED_DIRECTORIES].map(name => name.toLowerCase()));
+const ignoredDirectory = name => IGNORED_DIRECTORY_NAMES.has(name.toLowerCase());
 const LIMITS = Object.freeze({ entries: 20000, files: 500, fileBytes: 256 * 1024, totalBytes: 2 * 1024 * 1024, depth: 32, references: 200 });
 const compare = (a, b) => a < b ? -1 : a > b ? 1 : 0;
 const slash = value => value.split(path.sep).join('/');
@@ -59,7 +61,7 @@ export async function scanReferences({ catalog, references = [], root: rootOptio
     const absolute = normalize(path.resolve(value));
     if (await realpath(absolute) !== absolute) throw new Error('Reference paths must not contain symlinks.');
     const segments = path.relative(root, absolute).split(path.sep).filter(Boolean);
-    if (segments.some(segment => segment.startsWith('.') || IGNORED_DIRECTORIES.has(segment))) {
+    if (segments.some(segment => segment.startsWith('.') || ignoredDirectory(segment))) {
       throw new Error('Reference path is excluded by the default scan scope.');
     }
     const stat = await lstat(absolute);
@@ -92,7 +94,7 @@ export async function scanReferences({ catalog, references = [], root: rootOptio
       if (entry.isSymbolicLink() || entry.name.startsWith('.')) continue;
       const file = path.join(directory, entry.name);
       if (entry.isDirectory()) {
-        if (IGNORED_DIRECTORIES.has(entry.name)) continue;
+        if (ignoredDirectory(entry.name)) continue;
         if (!selected.some(base => contained(base, file) || contained(file, base))) continue;
         await walk(file, depth + 1);
       } else if (entry.isFile() && SOURCE_EXTENSIONS.has(path.extname(entry.name).toLowerCase()) && !generated(entry.name)) {
@@ -107,10 +109,15 @@ export async function scanReferences({ catalog, references = [], root: rootOptio
   await walk(root, 0);
 
   const keys = new Set(catalog.placements.map(placement => placement.key));
-  const symbols = catalog.placements.map(placement => ({
-    key: placement.key,
-    pattern: new RegExp(`(?<![A-Za-z0-9_$])(?:AppAssets|AssetCatalog|artwork)\\.${placement.symbol.map(escapeRegex).join('\\.')}(?![A-Za-z0-9_$])`),
-  }));
+  const symbolPath = segments => segments.map(escapeRegex).join('\\.');
+  const symbols = catalog.placements.map(({ key, symbol: [first, ...rest] }) => {
+    // Swift's AppArtwork lower-camels the group (artwork.travel.coast) and adds a coastArtwork(...) method.
+    const swift = symbolPath([first[0].toLowerCase() + first.slice(1), ...rest]);
+    return {
+      key,
+      pattern: new RegExp(`(?<![A-Za-z0-9_$])(?:(?:AppAssets|AssetCatalog|artwork)\\.${symbolPath([first, ...rest])}|artwork\\.${swift}(?:Artwork)?)(?![A-Za-z0-9_$])`),
+    };
+  });
   let bytesRead = 0;
   for (const file of sources.sort(compare)) {
     const relative = slash(path.relative(root, file));

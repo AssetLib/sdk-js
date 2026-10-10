@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- `@assetlib/cli`: `assetlib sync --references` now finds Swift call sites. The Swift SDK's generated accessors lower-camel the group and add an artwork method, so `artwork.travel.coast` and `artwork.travel.coastArtwork(...)` now count as references to the `["Travel", "coast"]` symbol. `AppAssets` and `AssetCatalog` matching is unchanged, and longer names such as `artwork.travel.coastline` still do not match.
+- `@assetlib/audit` and the `@assetlib/cli` reference scan now match ignored directory names case-insensitively, so `Vendor`, the common iOS spelling, is excluded like `vendor`. The list of names is unchanged.
+
 ## 0.4.1-preview.1 — October 9, 2026
 
 - `@assetlib/cli` 0.1.1: the README now installs the CLI from the release tarball instead of npm, where it is not published. No code change from 0.1.0.
