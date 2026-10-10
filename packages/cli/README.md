@@ -8,8 +8,10 @@ The CLI is not on the npm registry. Install the exact tarball attached to a GitH
 
 ```sh
 npm install --save-dev https://github.com/AssetLib/sdk-js/releases/download/v0.4.1-preview.1/assetlib-cli-0.1.1.tgz
-npx assetlib --help
+npx --no assetlib --help
 ```
+
+`--no` keeps `npx` to the installed copy. The `assetlib` name on npm is not ours; without the flag, a missing install would make `npx` fetch whatever package holds that name and run it beside `ASSETLIB_TOKEN`. In CI you can also call `./node_modules/.bin/assetlib` directly.
 
 Check the tarball against the release's `SHA256SUMS`, and pin it in your lockfile. From a checkout of this repository, after `npm ci`, run it directly:
 
