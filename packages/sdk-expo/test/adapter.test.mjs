@@ -45,6 +45,7 @@ export class Image extends React.Component {
 await writeFile(path.join(temporary, 'react-native.mjs'), `
 import { useSyncExternalStore } from 'react';
 export const Platform = { get OS() { return globalThis.__assetlibAdapter.os ?? 'ios'; } };
+export const PixelRatio = { get: () => globalThis.__assetlibAdapter.pixelRatio ?? 1 };
 export const AppState = { addEventListener: (_event, listener) => {
   if (globalThis.__assetlibAdapter.appStateError) throw new Error('AppState unavailable');
   const listeners = globalThis.__assetlibAdapter.appStateListeners;
@@ -773,3 +774,51 @@ for (const [component, method, componentProps, finish] of [
     assert.equal(displays.length, 1); assert.deepEqual(failures, []);
   });
 }
+
+test('template references default the pixel target to logical size times the display scale', async () => {
+  harness();
+  const calls = [];
+  const client = { reportDisplay() {}, reportFallback() {}, config, resolve: async (asset, options) => { calls.push({ asset, options }); return resolved('a'); }, resolveStateSet: async (asset, options) => { calls.push({ asset, options }); return { source: 'remote', sequence: 7, message: 'complete', states: { idle: resolved('a'), active: resolved('b') } }; } };
+  const icon = { key: 'tab.trips', width: 24, height: 20, rendering: 'template' };
+  globalThis.__assetlibAdapter.pixelRatio = 2.625;
+  let view;
+  await act(async () => { view = create(React.createElement(adapter.AssetlibImage, { client, asset: icon, fallback: 1, tintColor: '#1f1f1f' })); });
+  assert.deepEqual([calls[0].options.pixelWidth, calls[0].options.pixelHeight], [63, 53]);
+  assert.equal(view.root.findByType(Image).props.tintColor, '#1f1f1f');
+  await act(async () => { view.update(React.createElement(adapter.AssetlibImage, { client, asset: icon, fallback: 1, tintColor: '#1f1f1f', pixelWidth: 48, pixelHeight: 40 })); });
+  assert.deepEqual([calls[1].options.pixelWidth, calls[1].options.pixelHeight], [48, 40], 'An explicit target wins.');
+  await act(async () => { view.update(React.createElement(adapter.AssetlibImage, { client, asset: { key: 'travel.coast', width: 24, height: 20 }, fallback: 1 })); });
+  assert.deepEqual([calls[2].options.pixelWidth, calls[2].options.pixelHeight], [undefined, undefined], 'Original references keep today\'s behavior.');
+  await act(async () => { view.update(React.createElement(adapter.AssetlibStateImage, { client, asset: { ...icon, states: ['idle', 'active'] }, state: 'idle', fallbacks: { idle: 1, active: 2 }, tintColor: '#1f1f1f' })); });
+  assert.deepEqual([calls[3].options.pixelWidth, calls[3].options.pixelHeight], [63, 53]);
+  globalThis.__assetlibAdapter.pixelRatio = 3;
+  await act(async () => { view.update(React.createElement(adapter.AssetlibImage, { client, asset: icon, fallback: 1, tintColor: '#1f1f1f' })); });
+  assert.deepEqual([calls[4].options.pixelWidth, calls[4].options.pixelHeight], [72, 60]);
+  await act(async () => { view.unmount(); });
+});
+
+test('a template reference without tintColor warns once per placement in development only', async () => {
+  harness();
+  const warnings = [];
+  const warn = console.warn;
+  console.warn = message => warnings.push(message);
+  const client = { reportDisplay() {}, reportFallback() {}, config, resolve: async () => resolved('a') };
+  const render = async props => { let view; await act(async () => { view = create(React.createElement(adapter.AssetlibImage, { client, fallback: 1, ...props })); }); await act(async () => { view.unmount(); }); };
+  try {
+    globalThis.__DEV__ = false;
+    await render({ asset: { key: 'tab.quiet', width: 24, height: 24, rendering: 'template' } });
+    assert.deepEqual(warnings, [], 'Production builds stay silent.');
+    globalThis.__DEV__ = true;
+    await render({ asset: { key: 'tab.tinted', width: 24, height: 24, rendering: 'template' }, tintColor: '#1f1f1f' });
+    await render({ asset: { key: 'travel.coast', width: 24, height: 24 } });
+    assert.deepEqual(warnings, []);
+    for (let index = 0; index < 3; index++) await render({ asset: { key: 'tab.trips', width: 24, height: 24, rendering: 'template' } });
+    await render({ asset: { key: 'tab.saved', width: 24, height: 24, rendering: 'template' } });
+    assert.equal(warnings.length, 2);
+    assert.match(warnings[0], /tab\.trips is a tintable icon\. Pass tintColor/);
+    assert.match(warnings[1], /tab\.saved/);
+  } finally {
+    console.warn = warn;
+    delete globalThis.__DEV__;
+  }
+});

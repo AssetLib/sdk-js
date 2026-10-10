@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useColorScheme } from 'react-native';
+import { PixelRatio, useColorScheme } from 'react-native';
 import { Image, type ImageProps } from 'expo-image';
 import { createAssetClient, parsePublicConfig, resolveAccessibilityDescription, type AssetAccessibility, type AssetClient, type AssetlibConfig, type AssetRef, type AssetStatus, type CachePolicy, type ClientOptions, type DynamicAssetRef, type ResolvedAsset, type StateSetRef } from '@assetlib/sdk-core';
 import { createPlatformStorage, imageUri, platformFetch, vectorRenderingSupported } from './platform';
 import type { ImageUri } from './shared';
 import { expoTelemetry, flushOnBackground } from './telemetry';
 export { resolveAccessibilityDescription } from '@assetlib/sdk-core';
-export type { AssetAccessibility, AssetClient, AssetlibConfig, AssetRef, AssetStatus, CachePolicy, ClientStatus, DynamicAssetRef, RefreshResult, StateSetRef, TelemetryOptions } from '@assetlib/sdk-core';
+export type { AssetAccessibility, AssetClient, AssetlibConfig, AssetRef, AssetRendering, AssetStatus, CachePolicy, ClientStatus, DynamicAssetRef, RefreshResult, StateSetRef, TelemetryOptions } from '@assetlib/sdk-core';
 
 export function createExpoAssetClient(config: AssetlibConfig, options: { allowInsecureLoopback?: boolean; timeoutMs?: number; decisionTimeoutMs?: number; allowVector?: boolean; cachePolicy?: CachePolicy; decide?: ClientOptions['decide']; telemetry?: ClientOptions['telemetry'] } = {}): AssetClient {
   const validated = parsePublicConfig(config, options);
@@ -32,14 +32,34 @@ type DeliveryImageProps = Omit<ImageProps, 'source' | 'cachePolicy'> & {
   accessibilityLocale?: string;
   onStatus?: (status: AssetStatus) => void;
 };
-export type AssetlibImageProps = DeliveryImageProps & { asset: AssetRef; arm?: string; fallback: ImageSource; fallbackDark?: ImageSource; fallbackAccessibility?: AssetAccessibility };
+/** A tintable icon reference requires the app's tint color for its remote and bundled artwork. */
+type TemplateTint<R> = R extends { readonly rendering: 'template' } ? { tintColor: string } : unknown;
+export type AssetlibImageProps<R extends AssetRef = AssetRef> = DeliveryImageProps & { asset: R; arm?: string; fallback: ImageSource; fallbackDark?: ImageSource; fallbackAccessibility?: AssetAccessibility } & TemplateTint<R>;
 export type AssetlibDynamicImageProps = DeliveryImageProps & { asset: DynamicAssetRef; fallback: ImageSource; fallbackDark?: ImageSource; fallbackAccessibility?: AssetAccessibility };
-export type AssetlibStateImageProps = DeliveryImageProps & { asset: StateSetRef; arm?: string; state: string; fallbacks: Readonly<Record<string, ImageSource>>; fallbacksDark?: Readonly<Record<string, ImageSource>>; fallbackAccessibility?: Readonly<Record<string, AssetAccessibility>> };
+export type AssetlibStateImageProps<R extends StateSetRef = StateSetRef> = DeliveryImageProps & { asset: R; arm?: string; state: string; fallbacks: Readonly<Record<string, ImageSource>>; fallbacksDark?: Readonly<Record<string, ImageSource>>; fallbackAccessibility?: Readonly<Record<string, AssetAccessibility>> } & TemplateTint<R>;
 
 function useEffectiveAppearance(appearance: 'light' | 'dark' | 'system') {
   const systemAppearance = useColorScheme();
   if (appearance !== 'system') return appearance;
   return systemAppearance === 'light' || systemAppearance === 'dark' ? systemAppearance : undefined;
+}
+
+/** Template masks are rasters: without an explicit target, request logical size × display scale. */
+function pixelTarget(asset: AssetRef, pixelWidth?: number, pixelHeight?: number): { pixelWidth?: number; pixelHeight?: number } {
+  if (asset.rendering !== 'template' || pixelWidth !== undefined || pixelHeight !== undefined) return { pixelWidth, pixelHeight };
+  const ratio = PixelRatio.get();
+  const scale = Number.isFinite(ratio) && ratio > 0 ? ratio : 1;
+  return { pixelWidth: Math.min(8192, Math.ceil(asset.width * scale)), pixelHeight: Math.min(8192, Math.ceil(asset.height * scale)) };
+}
+
+const tintWarnings = new Set<string>();
+function useTemplateTintWarning(asset: AssetRef, tintColor: unknown) {
+  const missing = asset.rendering === 'template' && tintColor == null;
+  useEffect(() => {
+    if (!missing || typeof __DEV__ === 'undefined' || !__DEV__ || tintWarnings.has(asset.key)) return;
+    tintWarnings.add(asset.key);
+    console.warn(`Assetlib: ${asset.key} is a tintable icon. Pass tintColor so its remote and bundled artwork are drawn in your app's color.`);
+  }, [missing, asset.key]);
 }
 
 const bundled = (message: string): AssetStatus => ({ source: 'bundle', sequence: null, message, arm: null, armSource: 'control' });
@@ -124,10 +144,13 @@ function useResolvedImage(client: AssetClient, asset: AssetRef | DynamicAssetRef
   };
 }
 
-export function AssetlibImage({ client, asset, arm, fallback, fallbackDark, appearance = 'system', fallbackAccessibility = asset.bundledAccessibility, accessibilityMode, accessibilityLocale, revision = 0, pixelWidth, pixelHeight, cachePolicy, onStatus, onError, onLoad, ...props }: AssetlibImageProps) {
+export function AssetlibImage<R extends AssetRef>({ client, asset, arm, fallback, fallbackDark, appearance = 'system', fallbackAccessibility = asset.bundledAccessibility, accessibilityMode, accessibilityLocale, revision = 0, pixelWidth: requestedPixelWidth, pixelHeight: requestedPixelHeight, cachePolicy, onStatus, onError, onLoad, ...rest }: AssetlibImageProps<R>) {
+  const props: Omit<ImageProps, 'source' | 'cachePolicy'> = rest;
   const effectiveAppearance = useEffectiveAppearance(appearance);
+  const { pixelWidth, pixelHeight } = pixelTarget(asset, requestedPixelWidth, requestedPixelHeight);
+  useTemplateTintWarning(asset, props.tintColor);
   const requireDescription = accessibilityMode === 'description' && props.accessibilityLabel == null;
-  const request = useMemo(() => ({}), [client, asset.key, asset.width, asset.height, arm, revision, pixelWidth, pixelHeight, cachePolicy, requireDescription, effectiveAppearance]);
+  const request = useMemo(() => ({}), [client, asset.key, asset.width, asset.height, asset.rendering, arm, revision, pixelWidth, pixelHeight, cachePolicy, requireDescription, effectiveAppearance]);
   const image = useResolvedImage(client, asset, request, signal => client.resolve(asset, { pixelWidth, pixelHeight, cachePolicy, appearance: effectiveAppearance, arm, signal }), effectiveAppearance === 'dark' ? fallbackDark ?? fallback : fallback, fallbackAccessibility, requireDescription, onStatus);
   return <Image {...props} key={image.rendererKey} {...accessibilityProps(props, accessibilityMode, image.accessibility, accessibilityLocale)} cachePolicy="none" source={image.source} onLoad={event => { image.loaded(event); onLoad?.(event); }} onError={event => { image.fail(); onError?.(event); }} />;
 }
@@ -142,11 +165,14 @@ export function AssetlibDynamicImage({ client, asset, fallback, fallbackDark, ap
 }
 
 /** Resolves a complete visual family once. Changing only `state` selects the pinned result. */
-export function AssetlibStateImage({ client, asset, arm, state, fallbacks, fallbacksDark, appearance = 'system', fallbackAccessibility = asset.bundledStateAccessibility, accessibilityMode, accessibilityLocale, revision = 0, pixelWidth, pixelHeight, cachePolicy, onStatus, onError, onLoad, ...props }: AssetlibStateImageProps) {
+export function AssetlibStateImage<R extends StateSetRef>({ client, asset, arm, state, fallbacks, fallbacksDark, appearance = 'system', fallbackAccessibility = asset.bundledStateAccessibility, accessibilityMode, accessibilityLocale, revision = 0, pixelWidth: requestedPixelWidth, pixelHeight: requestedPixelHeight, cachePolicy, onStatus, onError, onLoad, ...rest }: AssetlibStateImageProps<R>) {
+  const props: Omit<ImageProps, 'source' | 'cachePolicy'> = rest;
   const effectiveAppearance = useEffectiveAppearance(appearance);
+  const { pixelWidth, pixelHeight } = pixelTarget(asset, requestedPixelWidth, requestedPixelHeight);
+  useTemplateTintWarning(asset, props.tintColor);
   const statesKey = JSON.stringify(asset.states);
   const requireDescription = accessibilityMode === 'description' && props.accessibilityLabel == null;
-  const request = useMemo(() => ({}), [client, asset.key, asset.width, asset.height, statesKey, arm, revision, pixelWidth, pixelHeight, cachePolicy, requireDescription, effectiveAppearance]);
+  const request = useMemo(() => ({}), [client, asset.key, asset.width, asset.height, asset.rendering, statesKey, arm, revision, pixelWidth, pixelHeight, cachePolicy, requireDescription, effectiveAppearance]);
   const [resolved, setResolved] = useState<{ request: object; images: Record<string, ImageUri>; results: Readonly<Record<string, ResolvedAsset>>; accessibility: Record<string, AssetAccessibility | undefined> } | null>(null);
   const callbacks = useRef({ onStatus });
   callbacks.current = { onStatus };

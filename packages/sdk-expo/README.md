@@ -56,6 +56,25 @@ Published placements resolve the requested appearance cell when bound, or inheri
 
 Dynamic collection payloads have no appearance cells, so their verified image stays the same while their bundled placeholder can follow appearance. Animations continue using the Any cell. Appearance-scoped cache keys isolate light, dark, and no-preference image requests, including historical cache fallback.
 
+## Tintable icons
+
+Declare `"rendering": "template"` on a catalog placement and regenerate its reference. Assetlib then delivers a single-color shape, and your app supplies the color, for example from its theme or a selected state. `AssetlibImage` and `AssetlibStateImage` pass `tintColor` to Expo Image for both the bundled and the downloaded image, so switching between them keeps the same color.
+
+```tsx
+<AssetlibImage
+  client={client}
+  asset={AppAssets.Tabs.trips}
+  fallback={require('./assets/tab-trips.png')}
+  tintColor={focused ? colors.ink : colors.muted}
+  style={{ width: 24, height: 24 }}
+/>
+```
+
+- TypeScript requires `tintColor` when `asset` is a generated template reference. At runtime, a template reference without `tintColor` logs one development warning per placement key.
+- The bundled fallback must be a single-color shape too, such as a PNG with alpha.
+- Without `pixelWidth` and `pixelHeight`, a template reference requests the placement's logical size × `PixelRatio.get()`, rounded up, so small icons stay sharp. Other references keep requesting the logical size.
+- If the published artwork's rendering does not match the reference, the component keeps the bundled fallback without downloading (see [tintable icons](../sdk-core/README.md#tintable-icons) in the core guide).
+
 ## Arms and app decisions
 
 Declare `"variants": { "arm": ["b", "c"], "appearance": ["dark"] }` on a catalog placement to enable arms alongside appearance. Arms contain 1–4 unique lowercase names matching `^[a-z][a-z0-9_-]{0,19}$`; `control`, `any`, `constructor`, `prototype`, and `__proto__` are reserved. Control remains the placement's existing image.
