@@ -97,15 +97,16 @@ test('skips symlinks, hidden entries, dependencies, and build directories', asyn
   await assert.rejects(auditAssets(path.join(root, 'linked-directory')), /real directory/);
 });
 
-test('matches ignored directory names case-insensitively without adding names', async t => {
+test('skips Vendor by exact name and reports it, while scanning first-party folders that differ only in case', async t => {
   const root = await fixture(t);
-  await put(root, 'assets/hero.png', png());
-  for (const dir of ['Vendor', 'NODE_MODULES', 'pods']) await put(root, `${dir}/ignored.png`, png());
-  await put(root, 'Vendored/kept.png', png());
+  await put(root, 'Vendor/ignored.png', png());
+  await put(root, 'Coverage/claim.png', png());
+  await put(root, 'Target/goal.png', png());
   const report = await auditAssets(root);
-  assert.deepEqual(report.assets.map(asset => asset.path), ['Vendored/kept.png', 'assets/hero.png']);
-  assert.equal(report.coverage.ignoredDirectories, 3);
-  assert.deepEqual(report.scope.ignoredDirectories, ['Build', 'Carthage', 'DerivedData', 'Pods', 'build', 'coverage', 'dist', 'graft', 'node_modules', 'out', 'target', 'vendor']);
+  assert.deepEqual(report.assets.map(asset => asset.path), ['Coverage/claim.png', 'Target/goal.png']);
+  assert.equal(report.coverage.ignoredDirectories, 1);
+  assert.equal(report.coverage.status, 'complete_within_scope');
+  assert.deepEqual(report.scope.ignoredDirectories, ['Build', 'Carthage', 'DerivedData', 'Pods', 'Vendor', 'build', 'coverage', 'dist', 'graft', 'node_modules', 'out', 'target', 'vendor']);
   await assert.rejects(auditAssets(root, { references: ['Vendor'] }), /excluded/);
 });
 

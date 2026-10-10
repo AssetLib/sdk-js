@@ -2,8 +2,8 @@
 
 ## Unreleased
 
-- `@assetlib/cli`: `assetlib sync --references` now finds Swift call sites. The Swift SDK's generated accessors lower-camel the group and add an artwork method, so `artwork.travel.coast` and `artwork.travel.coastArtwork(...)` now count as references to the `["Travel", "coast"]` symbol. `AppAssets` and `AssetCatalog` matching is unchanged, and longer names such as `artwork.travel.coastline` still do not match.
-- `@assetlib/audit` and the `@assetlib/cli` reference scan now match ignored directory names case-insensitively, so `Vendor`, the common iOS spelling, is excluded like `vendor`. The list of names is unchanged.
+- `@assetlib/cli`: `assetlib sync --references` now finds Swift call sites. The Swift SDK's generated accessors lower-camel the group and add an artwork method, so `artwork.travel.coast` and `artwork.travel.coastArtwork(...)` now count as references to the `["Travel", "coast"]` symbol. These Swift forms apply only to two-segment symbols, and a form that another placement can also produce (for example with a `["Travel", "coastArtwork"]` or `["travel", "coast"]` symbol in the same catalog) is not credited to either placement. `AppAssets`, `AssetCatalog` and `artwork` matching of the exact symbol is unchanged, and longer names such as `artwork.travel.coastline` still do not match.
+- `@assetlib/audit` and the `@assetlib/cli` reference scan now skip `Vendor` directories, the common iOS spelling. The ignore list, and the audit's reported `scope.ignoredDirectories`, now include `Vendor`. Names still match exactly, so first-party folders such as `Coverage` or `Target` are scanned.
 
 ## 0.4.1-preview.1 — October 9, 2026
 

@@ -6,9 +6,7 @@ import { imageSize } from 'image-size';
 
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp']);
 const SOURCE_EXTENSIONS = new Set(['.swift', '.m', '.mm', '.h', '.kt', '.java', '.xml', '.dart', '.js', '.jsx', '.mjs', '.cjs', '.ts', '.tsx', '.json', '.html', '.css', '.scss']);
-const IGNORED_DIRECTORIES = new Set(['node_modules', 'vendor', 'Pods', 'Carthage', 'build', 'Build', 'dist', 'out', 'coverage', 'DerivedData', 'target', 'graft']);
-const IGNORED_DIRECTORY_NAMES = new Set([...IGNORED_DIRECTORIES].map(name => name.toLowerCase()));
-const ignoredDirectory = name => IGNORED_DIRECTORY_NAMES.has(name.toLowerCase());
+const IGNORED_DIRECTORIES = new Set(['node_modules', 'vendor', 'Vendor', 'Pods', 'Carthage', 'build', 'Build', 'dist', 'out', 'coverage', 'DerivedData', 'target', 'graft']);
 const DEFAULTS = Object.freeze({ longEdge: 2048, maxFiles: 2000, maxEntries: 20000, maxFileBytes: 32 * 1024 * 1024, maxBytes: 128 * 1024 * 1024, maxSourceFiles: 500, maxSourceBytes: 2 * 1024 * 1024, maxSourceFileBytes: 256 * 1024, maxHintsPerAsset: 10, maxDepth: 32 });
 const CEILINGS = { longEdge: 100000, maxFiles: 10000, maxEntries: 100000, maxFileBytes: 128 * 1024 * 1024, maxBytes: 1024 * 1024 * 1024, maxSourceFiles: 2000, maxSourceBytes: 32 * 1024 * 1024, maxSourceFileBytes: 2 * 1024 * 1024, maxHintsPerAsset: 100, maxDepth: 64 };
 const slash = value => value.split(path.sep).join('/');
@@ -64,7 +62,7 @@ export async function auditAssets(rootPath, options = {}) {
       if (!contained(root, absolute)) throw new Error(`${label} paths must be inside the audit root.`);
       if (await realpath(absolute) !== absolute) throw new Error(`${label} paths must not contain symlinks.`);
       const segments = path.relative(root, absolute).split(path.sep).filter(Boolean);
-      if (segments.some(segment => segment.startsWith('.') || ignoredDirectory(segment))) throw new Error(`${label} path is excluded by the default scan scope.`);
+      if (segments.some(segment => segment.startsWith('.') || IGNORED_DIRECTORIES.has(segment))) throw new Error(`${label} path is excluded by the default scan scope.`);
       const stat = await lstat(absolute);
       if (!stat.isDirectory() && (!stat.isFile() || !extensions.has(path.extname(absolute).toLowerCase()))) throw new Error(`${label} path must be a directory or supported regular file.`);
       result.push(absolute);
@@ -101,7 +99,7 @@ export async function auditAssets(rootPath, options = {}) {
       if (entry.isSymbolicLink()) { coverage.skippedSymlinks++; continue; }
       if (entry.name.startsWith('.')) { coverage.ignoredHiddenEntries++; continue; }
       if (entry.isDirectory()) {
-        if (ignoredDirectory(entry.name)) { coverage.ignoredDirectories++; continue; }
+        if (IGNORED_DIRECTORIES.has(entry.name)) { coverage.ignoredDirectories++; continue; }
         if (!scanRoots.some(base => contained(base, file) || contained(file, base))) { coverage.excludedByPathSelection++; continue; }
         await walk(file, depth + 1);
       } else if (entry.isFile()) {

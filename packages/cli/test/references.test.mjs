@@ -101,12 +101,51 @@ test('skips audit exclusions, unsupported extensions, and symlinks without follo
   await assert.rejects(scan(root, [path.join(root, 'node_modules')]), /excluded/);
 });
 
-test('matches excluded directory names case-insensitively without excluding similar names', async t => {
+test('skips Vendor by exact name while scanning first-party folders that differ only in case', async t => {
   const root = await fixture(t);
-  for (const directory of ['Vendor', 'NODE_MODULES', 'pods', 'deriveddata']) await put(root, `${directory}/hidden.swift`, '"travel.coast"');
-  await put(root, 'Vendored/visible.swift', '"tasks.garden"');
-  assert.deepEqual((await scan(root)).codeReferences, [{ key: 'tasks.garden', path: 'Vendored/visible.swift', line: 1 }]);
+  await put(root, 'Vendor/hidden.swift', '"travel.coast"');
+  await put(root, 'Coverage/Policy.swift', '"tasks.garden"');
+  await put(root, 'Target/Screen.swift', '"travel.coast"');
+  assert.deepEqual((await scan(root)).codeReferences, [
+    { key: 'tasks.garden', path: 'Coverage/Policy.swift', line: 1 },
+    { key: 'travel.coast', path: 'Target/Screen.swift', line: 1 },
+  ]);
   await assert.rejects(scan(root, [path.join(root, 'Vendor')]), /excluded/);
+});
+
+test('never credits an ambiguous derived Swift form to more than one placement', async t => {
+  const root = await fixture(t);
+  await put(root, 'Screen.swift', [
+    'let a = session.artwork.travel.coastArtwork',
+    'let b = artwork.travel.coast',
+    'let c = artwork.Travel.coastArtwork',
+    'let d = artwork.Travel.coast',
+  ].join('\n'));
+  const scanWith = placements => scan(root, [root], { catalog: { schemaVersion: 1, placements } });
+  const coast = { key: 'travel.coast', symbol: ['Travel', 'coast'], width: 10, height: 10 };
+  // Line 1 is both coast's artwork method and coastArtwork's Swift accessor, so neither is credited.
+  assert.deepEqual((await scanWith([coast, { key: 'travel.coast-artwork', symbol: ['Travel', 'coastArtwork'], width: 10, height: 10 }])).codeReferences, [
+    { key: 'travel.coast', path: 'Screen.swift', line: 2 },
+    { key: 'travel.coast-artwork', path: 'Screen.swift', line: 3 },
+    { key: 'travel.coast', path: 'Screen.swift', line: 4 },
+  ]);
+  // artwork.travel.coast is the lower-case placement's canonical form; coast's derived copy is dropped.
+  assert.deepEqual((await scanWith([coast, { key: 'travel.coast-lower', symbol: ['travel', 'coast'], width: 10, height: 10 }])).codeReferences, [
+    { key: 'travel.coast-lower', path: 'Screen.swift', line: 2 },
+    { key: 'travel.coast', path: 'Screen.swift', line: 4 },
+  ]);
+});
+
+test('derives Swift forms only for two-segment symbols', async t => {
+  const root = await fixture(t);
+  await put(root, 'Screen.swift', ['let a = artwork.Hero', 'let b = artwork.hero', 'let c = artwork.HeroArtwork', 'let d = artwork.travel.coast.wide'].join('\n'));
+  const placements = [
+    { key: 'hero', symbol: ['Hero'], width: 10, height: 10 },
+    { key: 'travel.coast.wide', symbol: ['Travel', 'coast', 'wide'], width: 10, height: 10 },
+  ];
+  assert.deepEqual((await scan(root, [root], { catalog: { schemaVersion: 1, placements } })).codeReferences, [
+    { key: 'hero', path: 'Screen.swift', line: 1 },
+  ]);
 });
 
 test('requires a common root and resolves explicit root and reference paths from cwd', async t => {
