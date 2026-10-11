@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.4-preview.1 — October 11, 2026
+
+- `@assetlib/sdk-expo`: in Safari, `AssetlibVideo` played the clip but never hid the poster, so people saw a still image. It hid the poster only when expo-video reported the first frame. expo-video 57.0.5's web `VideoView` attaches its `loadstart` listener in an effect, and WebKit fires `loadstart` before that listener exists, so the first-frame event never arrives. On web, a resolved `play()` on the `<video>` element now also counts as the first frame. A rejected `play()` still keeps the poster. Found in end-to-end checks on October 11, 2026, in headless Playwright WebKit 26.6, desktop Safari 27.0.1 through `safaridriver`, and Mobile Safari 27.0 on an iOS 27 Simulator. The fix was checked the same day in those three and in headless Chrome 154: the poster hides once playback starts and frames advance and loop. Native iOS and Android were unaffected.
+- `@assetlib/sdk-core` changes only its version and README. `@assetlib/cli` 0.3.1 and `@assetlib/audit` 0.2.1 are unchanged.
+
 ## 0.6.3-preview.1 — October 11, 2026
 
 - `@assetlib/audit` 0.2.1: the text report writes counts in the singular and plural ("1 exact duplicate group", "2 dimension candidates", "1 change") instead of always plural or "(s)". The JSON report is unchanged.

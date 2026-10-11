@@ -66,8 +66,10 @@ function LoopingClip({ uri, contentFit, onFirstFrame, onFailure }: { uri: string
     try {
       if (player.status === 'error') fail();
       // On web, VideoView exposes its <video> element, whose play() promise rejects when autoplay is blocked.
+      // It resolves once playback starts, which also counts as the first frame: Safari fires loadstart before
+      // expo-video's web VideoView listens for it, so onFirstFrameRender never arrives there.
       const element = (view.current as unknown as { nativeRef?: { current?: PlayableElement | null } } | null)?.nativeRef?.current;
-      if (typeof element?.play === 'function') Promise.resolve(element.play()).catch(fail);
+      if (typeof element?.play === 'function') Promise.resolve(element.play()).then(() => { if (mounted) callbacks.current.onFirstFrame(); }, fail);
       else player.play();
     } catch { fail(); }
     return () => { mounted = false; subscription.remove(); };

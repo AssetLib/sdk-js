@@ -109,6 +109,30 @@ test('reduced motion shows the poster without resolving; allowed motion plays a 
   assert.deepEqual(env.released, ['a'], 'unmounting releases the clip URI (a Blob URL on web)');
 });
 
+test('on web a started play() hides the poster without onFirstFrameRender, which Safari never sends', async () => {
+  const { env, client } = harness({ web: true });
+  const started = [];
+  env.webPlay = () => new Promise(resolve => started.push(resolve));
+  let renderer;
+  await act(async () => { renderer = create(view(client, 'a')); });
+  await flush();
+  assert.equal(videos(renderer).length, 1); assert.equal(started.length, 1);
+  assert.equal(posterOpacity(renderer), 1, 'the poster stays until playback starts');
+  await act(async () => started[0]()); await flush();
+  assert.equal(posterOpacity(renderer), 0);
+  // A play() that starts after its clip unmounted must not hide the next clip's poster early.
+  await emit(env.motionListeners, true); await flush();
+  await emit(env.motionListeners, false); await flush();
+  assert.equal(started.length, 2);
+  await emit(env.motionListeners, true); await flush();
+  await act(async () => started[1]()); await flush();
+  await emit(env.motionListeners, false); await flush();
+  assert.equal(videos(renderer).length, 1); assert.equal(posterOpacity(renderer), 1);
+  await act(async () => started[2]()); await flush();
+  assert.equal(posterOpacity(renderer), 0);
+  await act(() => renderer.unmount());
+});
+
 test('an unknown or failing reduced-motion query keeps the poster', async () => {
   for (const reduceMotionQuery of [() => new Promise(() => {}), async () => { throw new Error('unavailable'); }]) {
     const { env, client } = harness();
