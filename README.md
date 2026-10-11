@@ -99,4 +99,4 @@ npm run verify
 npm run pack:release
 ```
 
-Verification builds the core, runs the core, Expo, audit, and CLI tests, typechecks the Expo adapter, and checks the CLI entry point. Packing writes four tarballs (core, Expo, audit, and CLI) and their SHA-256 checksums into `release/`; it does not publish to npm or GitHub. GitHub releases attach the core, Expo, and CLI tarballs, and the same tarballs are published to npm under the `preview` dist-tag; the audit is published to npm. See [CONTRIBUTING](CONTRIBUTING.md) and [SECURITY](SECURITY.md).
+Verification builds the core, runs the core, Expo, audit, and CLI tests, typechecks the Expo adapter, and checks the CLI entry point. Packing writes four tarballs (core, Expo, audit, and CLI) and their SHA-256 checksums into `release/`; it does not publish to npm or GitHub. The release workflow publishes those same tarballs to npm with trusted publishing and attaches them to the GitHub release; see [AGENTS.md](AGENTS.md#releases-and-versions). See [CONTRIBUTING](CONTRIBUTING.md) and [SECURITY](SECURITY.md).

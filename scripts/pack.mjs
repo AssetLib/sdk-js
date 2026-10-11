@@ -16,4 +16,4 @@ for (const name of ['sdk-core', 'sdk-expo', 'audit', 'cli']) {
   console.log(`${pack.filename}: ${bytes.length} bytes`);
 }
 await writeFile(path.join(output, 'SHA256SUMS'), sums.join('\n') + '\n');
-console.log('Release tarballs and SHA256SUMS are in release/. Nothing was published. Maintainers attach the core, Expo and CLI tarballs to the GitHub release and publish those same files to npm under the preview dist-tag (see AGENTS.md); the audit is published to npm.');
+console.log('Release tarballs and SHA256SUMS are in release/. Nothing was published. The release workflow publishes these files to npm and attaches them to the GitHub release (see AGENTS.md).');

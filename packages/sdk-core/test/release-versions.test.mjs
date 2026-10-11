@@ -28,12 +28,14 @@ test('docs name the current release tag, tarballs and supported version', async 
   const docs = Object.fromEntries(await Promise.all(['README.md', 'packages/cli/README.md', 'packages/sdk-expo/README.md', 'SECURITY.md'].map(async file => [file, await text(file)])));
   for (const tarball of [`assetlib-sdk-core-${version}.tgz`, `assetlib-sdk-expo-${version}.tgz`]) assert.ok(docs['README.md'].includes(release + tarball), `README.md must link ${tarball}`);
   assert.ok(docs['README.md'].includes(`assetlib-cli-${cli}.tgz`), 'README.md must name the CLI tarball');
-  assert.ok(docs['packages/cli/README.md'].includes(`${release}assetlib-cli-${cli}.tgz`), 'CLI README must link the CLI tarball');
+  // The CLI README ships inside the CLI package, so it links the release that first shipped this CLI version and changes
+  // only when the CLI version does; otherwise every SDK release would repack a different CLI under the same version.
+  assert.match(docs['packages/cli/README.md'], new RegExp(`releases/download/v[^/\\s]+/assetlib-cli-${cli.replaceAll('.', '\\.')}\\.tgz`), 'CLI README must link the CLI tarball');
   for (const name of ['sdk-core', 'sdk-expo']) assert.ok(docs['README.md'].includes(`@assetlib/${name}@${version}`), `README.md must install @assetlib/${name}@${version}`);
   assert.ok(docs['packages/cli/README.md'].includes(`@assetlib/cli@${cli}`), 'CLI README must install @assetlib/cli at its version');
   assert.ok(docs['packages/sdk-expo/README.md'].includes(`\`sdk-expo\` version \`${version}\``), 'Expo README must state the reported SDK version');
   assert.ok(docs['SECURITY.md'].includes(`\`${version}\``), 'SECURITY.md must name the supported version');
-  for (const [file, body] of Object.entries(docs)) {
+  for (const [file, body] of Object.entries(docs).filter(([file]) => file !== 'packages/cli/README.md')) {
     for (const [, tag] of body.matchAll(/github\.com\/AssetLib\/sdk-js\/releases\/download\/([^/\s]+)\//g)) assert.equal(tag, `v${version}`, `${file} links release ${tag}`);
   }
 });
