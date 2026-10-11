@@ -90,7 +90,7 @@ test('every manifest fixture is indexed by a case', async () => {
   assert.deepEqual(files.filter(file => !indexed.has(file)), []);
 });
 test('published JS limits equal the documented native preview contract', () => {
-  assert.deepEqual(SDK_LIMITS, { configBytes: 4096, pinnedKeys: 16, publicKeyBytes: 256, manifestBytes: 262144, assetBytes: 8388608, slots: 100, retainedReleases: 8, stateBytes: 3145728, cacheBytes: 52428800, cacheEntries: 100 });
+  assert.deepEqual(SDK_LIMITS, { configBytes: 4096, pinnedKeys: 16, publicKeyBytes: 256, manifestBytes: 262144, assetBytes: 8388608, slots: 100, retainedReleases: 8, stateBytes: 3145728, cacheBytes: 52428800, cacheEntries: 100, videoBytes: 4194304 });
 });
 for (const item of cases.publicConfigs) {
   for (const mode of ['string', 'object']) test(`shared public config ${item.parsing} (${mode}): ${item.file}`, async () => {
@@ -423,5 +423,80 @@ for (const [index, item] of rendering.cases.entries()) {
 test('every malformed rendering manifest in the shared corpus is rejected', () => {
   const malformed = cases.manifests.filter(item => item.file.startsWith('manifests/invalid/rendering-'));
   assert.ok(malformed.length >= 10);
+  for (const item of malformed) assert.equal(item.verification, 'reject', item.file);
+});
+
+// Short looping video: resolveVideo downloads only for the current release and uses
+// a clip only after its length, SHA-256 and MP4 header match. Anything else is the poster.
+const video = await json('video.json');
+// Keyed by the last URL segment: a clip's SHA-256, or a poster's asset ID.
+const clipBodies = new Map([[video.descriptor.sha256, await bytes(video.file)], [assets.coast.sha256, coast], [assets.coast.assetId, coast], [assets.ridge.assetId, ridge]]);
+function videoHarness(manifest, body) {
+  const storage = createMemoryStorage(), requests = [];
+  const fetch = async (url, init) => {
+    requests.push({ url, init });
+    if (url === config.manifestUrl) return new Response(JSON.stringify(manifest));
+    const found = body ?? clipBodies.get(url.split('/').at(-1));
+    return found ? new Response(found) : new Response(null, { status: 404 });
+  };
+  return { client: new AssetClient(config, { storage, fetch }), storage, requests };
+}
+test('shared video clip and descriptor agree', async () => {
+  const clip = clipBodies.get(video.descriptor.sha256);
+  assert.equal(clip.length, video.descriptor.bytes);
+  assert.equal(sha256(clip), video.descriptor.sha256);
+  assert.equal(video.descriptor.bytes <= SDK_LIMITS.videoBytes, true);
+});
+for (const item of video.cases) {
+  test(`shared video ${item.expect}: ${item.manifest}`, async () => {
+    assert.equal(cases.manifests.find(value => value.file === item.manifest)?.verification, 'accept');
+    const manifest = await json(item.manifest);
+    const slot = verifySignedManifest(manifest, config).payload.slots.find(value => value.key === ref.key && value.width === ref.width && value.height === ref.height);
+    const images = videoHarness(manifest);
+    await images.client.refresh();
+    assert.equal((await images.client.resolve(ref)).source, 'remote');
+    assert.ok(images.requests.every(request => !request.url.includes('/videos/')), 'ordinary image resolution never downloads a clip');
+    const h = videoHarness(manifest);
+    await h.client.refresh();
+    h.requests.length = 0;
+    const result = await h.client.resolveVideo(ref);
+    assert.deepEqual(h.requests.map(request => request.url), [new URL(slot.video.url, config.manifestUrl).href]);
+    assert.equal(h.requests[0].init.headers.Accept, 'video/mp4');
+    assert.equal(h.requests[0].init.credentials, 'omit');
+    assert.equal(h.requests[0].init.redirect, 'error');
+    if (item.expect === 'video') {
+      assert.equal(result.source, 'remote');
+      assert.equal(result.sha256, item.sha256);
+      assert.equal(result.sequence, verifySignedManifest(manifest, config).payload.sequence);
+      assert.equal(result.mime, 'video/mp4');
+      assert.deepEqual(Buffer.from(result.bytes), clipBodies.get(item.sha256));
+      for (const field of ['width', 'height', 'durationMs', 'frameRate']) assert.equal(result[field], video.descriptor[field]);
+      assert.equal((await h.client.resolveVideo(ref)).source, 'cache');
+      return;
+    }
+    assert.equal(item.expect, 'poster');
+    assert.equal(item.reason, 'header');
+    // The signed bytes passed the length and hash check; only the header check fails.
+    assert.equal(sha256(clipBodies.get(slot.video.sha256)), slot.video.sha256);
+    assert.equal(result.source, 'poster');
+    assert.equal(result.sequence, null);
+    assert.match(result.message, /header/);
+    assert.equal(result.bytes, undefined);
+    assert.equal(await h.storage.getAsset(slot.video.sha256), null, 'a clip that fails the header check is never cached');
+  });
+}
+for (const item of video.byteFailures) {
+  test(`shared video byte failure gives the poster: ${item.body}`, async () => {
+    const h = videoHarness(await json(item.manifest), await bytes(item.body));
+    await h.client.refresh();
+    const result = await h.client.resolveVideo(ref);
+    assert.equal(result.source, 'poster');
+    assert.match(result.message, /do not match/);
+    assert.equal(await h.storage.getAsset(video.descriptor.sha256), null);
+  });
+}
+test('every malformed video manifest in the shared corpus is rejected', () => {
+  const malformed = cases.manifests.filter(item => item.file.startsWith('manifests/invalid/video-'));
+  assert.ok(malformed.length >= 25);
   for (const item of malformed) assert.equal(item.verification, 'reject', item.file);
 });

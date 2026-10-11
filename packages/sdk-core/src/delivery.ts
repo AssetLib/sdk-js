@@ -14,6 +14,8 @@ export function validateRendering(value: Record<string, unknown>): void {
 
 export function validateDescriptor(value: unknown, width: number, height: number, config: AssetlibConfig, renditionSchemaVersion?: unknown): void {
   if (!record(value) || typeof value.assetId !== 'string' || !assetIdPattern.test(value.assetId) || typeof value.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(value.sha256) || value.mime !== 'image/webp' || !integer(value.bytes, 1, 8 * 1024 * 1024) || typeof value.url !== 'string') throw new Error('Invalid image descriptor.');
+  // Clips belong to base placements only: never to state members, variant cells or catalog page images.
+  if ('video' in value) throw new Error('Video is allowed only on a base placement.');
   const url = new URL(value.url, config.manifestUrl);
   if (url.origin !== new URL(config.manifestUrl).origin || url.username || url.password || url.search || url.hash || url.pathname !== `/api/delivery/${config.orgId}/${config.appId}/assets/${value.assetId}`) throw new Error('Image descriptor URL is outside the configured app.');
   validateRenditions(renditionSchemaVersion === undefined ? {} : { renditionSchemaVersion }, { ...value, width, height }, config);

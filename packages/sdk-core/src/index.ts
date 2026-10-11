@@ -2,12 +2,13 @@ import { ed25519 } from '@noble/curves/ed25519.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 import { base64 } from '@scure/base';
-import type { AssetlibConfig, AssetMime, AssetRef, AssetRendering, AssetStatus, AssetPage, AssetPageOptions, AssetPagePayload, ArmSource, CachePolicy, StorageMime, CatalogAsset, DynamicAssetRef, FallbackReason, StateSetRef, ResolvedStateSet, ManifestSlot, ClientOptions, ClientStatus, ManifestPayload, RefreshResult, ResolvedAsset, ResolvedAnimation, ResolveOptions, SignedManifest } from './types.js';
+import type { AssetlibConfig, AssetMime, AssetRef, AssetRendering, AssetStatus, AssetPage, AssetPageOptions, AssetPagePayload, ArmSource, CachePolicy, StorageMime, CatalogAsset, DynamicAssetRef, FallbackReason, StateSetRef, ResolvedStateSet, ManifestSlot, ClientOptions, ClientStatus, ManifestPayload, RefreshResult, ResolvedAsset, ResolvedAnimation, ResolvedVideo, ResolveOptions, ResolveVideoOptions, SignedManifest } from './types.js';
 import { ObservationReporter } from './telemetry.js';
 export type * from './types.js';
 import { selectAssetCandidates, supportedFormats, targetPixels, validRenditionHeader, validateRenditions, type AssetCandidate } from './renditions.js';
 export { selectAssetCandidates } from './renditions.js';
 import { validateAnimationExtension, verifiedAnimationData } from './animations.js';
+import { checkMp4Header, validateVideoExtension, VIDEO_BYTES } from './video.js';
 export { validateLottie, validateLottieMetadata, LOTTIE_LIMITS } from './lottie.js';
 export type { LottieMetadata, ValidatedLottie } from './lottie.js';
 export { selectCatalogReferences } from './catalog.js';
@@ -15,7 +16,7 @@ import { assetIdPattern, catalogForSequence, validateAssetPage, validateDelivery
 import { validateAccessibility } from './accessibility.js';
 export { resolveAccessibilityDescription, validateAccessibility } from './accessibility.js';
 
-export const SDK_LIMITS = Object.freeze({ configBytes: 4096, pinnedKeys: 16, publicKeyBytes: 256, manifestBytes: 256 * 1024, assetBytes: 8 * 1024 * 1024, slots: 100, retainedReleases: 8, stateBytes: 3 * 1024 * 1024, cacheBytes: 50 * 1024 * 1024, cacheEntries: 100 });
+export const SDK_LIMITS = Object.freeze({ configBytes: 4096, pinnedKeys: 16, publicKeyBytes: 256, manifestBytes: 256 * 1024, assetBytes: 8 * 1024 * 1024, slots: 100, retainedReleases: 8, stateBytes: 3 * 1024 * 1024, cacheBytes: 50 * 1024 * 1024, cacheEntries: 100, videoBytes: VIDEO_BYTES });
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const hashPattern = /^[a-f0-9]{64}$/;
 const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
@@ -100,6 +101,7 @@ export function verifySignedManifest(input: unknown, config: AssetlibConfig): { 
     if (url.origin !== new URL(config.manifestUrl).origin || url.username || url.password || url.search || url.hash || url.pathname !== `/api/delivery/${config.orgId}/${config.appId}/assets/${value.assetId}`) return fail('Asset URL is outside the configured app.');
     validateRenditions(payload, value, config);
     validateAnimationExtension(payload, value, config);
+    validateVideoExtension(payload, value, config);
     if ('accessibility' in value) validateAccessibility(value.accessibility);
     validateRendering(value);
     keys.add(value.key);
@@ -204,6 +206,7 @@ export class AssetClient {
   private reporter?: ObservationReporter;
   private queue: Promise<unknown> = Promise.resolve();
   private timeoutMs: number;
+  private videoTimeoutMs: number;
   private decisionTimeoutMs: number;
   private fetcher: typeof fetch;
   private formats: readonly AssetMime[];
@@ -221,6 +224,8 @@ export class AssetClient {
     if (!integer(this.concurrency, 1, 8)) fail('maxConcurrentDownloads must be between 1 and 8.');
     this.timeoutMs = options.timeoutMs ?? 8000;
     if (!integer(this.timeoutMs, 20, 30000)) fail('timeoutMs must be between 20 and 30000.');
+    this.videoTimeoutMs = options.videoTimeoutMs ?? 30000;
+    if (!integer(this.videoTimeoutMs, 20, 30000)) fail('videoTimeoutMs must be between 20 and 30000.');
     this.decisionTimeoutMs = options.decisionTimeoutMs === undefined ? 1500 : options.decisionTimeoutMs;
     if (!integer(this.decisionTimeoutMs, 100, 10000)) fail('decisionTimeoutMs must be between 100 and 10000.');
     this.fetcher = options.fetch ?? globalThis.fetch;
@@ -530,6 +535,54 @@ export class AssetClient {
         } catch (error) { throwIfAborted(options.signal); message = error instanceof Error ? error.message : 'Animation could not be loaded.'; }
       }
       return { source: 'poster', sequence: null, message: `Use the still poster. ${message}` };
+  }
+  /** Explicit opt-in. Image resolution never downloads a clip. Uses the base placement only. */
+  async resolveVideo(ref: AssetRef, options: ResolveVideoOptions = {}): Promise<ResolvedVideo> {
+    if (!validKey(ref.key) || !integer(ref.width, 1, 8192) || !integer(ref.height, 1, 8192)) throw new Error('Invalid generated asset reference.');
+    const policy = cachePolicy(options.cachePolicy ?? this.policy);
+    throwIfAborted(options.signal);
+    const history = await this.snapshot();
+    throwIfAborted(options.signal);
+    const storage = this.options.storage;
+    const files = typeof storage.getAssetFileUri === 'function';
+    const poster = (message: string): ResolvedVideo => ({ source: 'poster', sequence: null, message: `Use the still poster. ${message}` });
+    if (files && policy !== 'disk') return poster('This platform plays clips from local files, which needs the disk cache policy.');
+    let message = this.storageFailure ?? 'No compatible published clip is available.';
+    for (let index = 0; index < history.length; index++) {
+      const { payload } = history[index];
+      const slot = payload.slots.find(item => item.key === ref.key && item.width === ref.width && item.height === ref.height);
+      const video = slot?.video;
+      // Removing a clip is intentional publication state, not a failed download.
+      if (index === 0 && !video) return { source: 'poster', sequence: null, message: 'The current release has no compatible clip. Use the still poster.' };
+      if (!slot || !video) continue;
+      const verify = (bytes: Uint8Array) => {
+        if (bytes.byteLength !== video.bytes || hashBytes(bytes) !== video.sha256) throw new Error('Clip bytes do not match the signed manifest.');
+        checkMp4Header(bytes, video.width, video.height);
+      };
+      const result = async (source: 'cache' | 'remote', bytes: Uint8Array): Promise<ResolvedVideo> => {
+        const uri = files ? await storage.getAssetFileUri!(video.sha256, video.mime) : null;
+        if (files && typeof uri !== 'string') throw new Error('The verified clip is not available as a local file.');
+        return { source, sequence: payload.sequence, message: index ? `Using verified clip from release ${payload.sequence}. ${message}` : source === 'cache' ? 'Verified clip loaded from the local cache.' : 'Downloaded clip; signature, hash and MP4 header verified.',
+          sha256: video.sha256, assetId: slot.assetId, mime: 'video/mp4', width: video.width, height: video.height, durationMs: video.durationMs, frameRate: video.frameRate, ...(files ? { uri: uri! } : { bytes }) };
+      };
+      try {
+        const cached = await this.cached(video.sha256, policy);
+        throwIfAborted(options.signal);
+        if (cached) {
+          try { verify(cached); return await result('cache', cached); }
+          catch (error) { message = error instanceof Error ? error.message : 'Cached clip is invalid.'; }
+        }
+        // Older releases may be used only when already cached and reverified.
+        if (index !== 0) continue;
+        const bytes = await this.withTransfer(() => fetchBounded(this.fetcher, new URL(video.url, this.config.manifestUrl).href, video.bytes, this.videoTimeoutMs, video.mime, options.signal, policy !== 'disk'), options.signal);
+        throwIfAborted(options.signal);
+        verify(bytes);
+        await this.retain(video.sha256, bytes, video.mime, policy);
+        throwIfAborted(options.signal);
+        return await result('remote', bytes);
+      } catch (error) { throwIfAborted(options.signal); message = error instanceof Error ? error.message : 'Clip could not be loaded.'; }
+    }
+    return poster(message);
   }
   private validBytes(bytes: Uint8Array, candidate: AssetCandidate): boolean {
     return bytes.byteLength === candidate.bytes && bytes.byteLength <= SDK_LIMITS.assetBytes && hashBytes(bytes) === candidate.sha256 && validRenditionHeader(bytes, candidate);

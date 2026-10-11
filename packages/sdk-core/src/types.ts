@@ -12,8 +12,8 @@ export type DynamicAssetRef = { readonly kind: 'dynamic'; readonly assetId: stri
 export type ArmSource = 'explicit' | 'decision' | 'control' | 'invalid-decision';
 export type AssetStatus = { source: 'bundle' | 'cache' | 'remote'; sequence: number | null; message: string; /** Arm of the selected artwork; null for control or bundled fallback. */ arm: string | null; armSource: ArmSource; /** Effective selected cell; omitted for Any or bundled artwork. */ appearance?: Appearance; /** Why bundled artwork was selected. Never includes exception text in observations. */ fallbackReason?: FallbackReason; sha256?: string; assetId?: string };
 export type AssetMime = 'image/webp' | 'image/png' | 'image/svg+xml';
-/** Cache transport MIME types; animation is never an image format candidate. */
-export type StorageMime = AssetMime | 'application/json';
+/** Cache transport MIME types; animation and video are never image format candidates. */
+export type StorageMime = AssetMime | 'application/json' | 'video/mp4';
 export type ResolvedAsset = AssetStatus & { bytes?: Uint8Array; mime?: AssetMime; pixelWidth?: number; pixelHeight?: number; cachePolicy?: CachePolicy; /** Storage identity, including requested arm and appearance; sha256 remains the content hash. */ cacheKey?: string; accessibility?: AssetAccessibility; /** Rendering of the delivered descriptor; omitted for bundled artwork. */ rendering?: AssetRendering };
 export type ResolvedStateSet = AssetStatus & { states: Readonly<Record<string, ResolvedAsset>> };
 export type AnimationDescriptor = { format: 'lottie'; profile: 'vector-v1'; mime: 'application/json'; sha256: string; url: string; bytes: number; width: number; height: number; frameRate: number; inPoint: number; outPoint: number };
@@ -22,6 +22,16 @@ export type ResolvedAnimation = { source: 'poster'; sequence: null; message: str
   mime: 'application/json'; bytes: Uint8Array; data: Record<string, unknown>;
   width: number; height: number; frameRate: number; inPoint: number; outPoint: number;
 };
+export type VideoDescriptor = { format: 'mp4'; profile: 'h264-loop-v1'; mime: 'video/mp4'; sha256: string; url: string; bytes: number; width: number; height: number; durationMs: number; frameRate: number };
+export type ResolvedVideo = { source: 'poster'; sequence: null; message: string } | {
+  source: 'cache' | 'remote'; sequence: number; message: string; sha256: string; assetId: string; mime: 'video/mp4';
+  width: number; height: number; durationMs: number; frameRate: number;
+  /** Verified clip bytes, when the storage adapter has no `getAssetFileUri`. */
+  bytes?: Uint8Array;
+  /** Local file URI of the verified cached clip, from a storage adapter with `getAssetFileUri`. */
+  uri?: string;
+};
+export type ResolveVideoOptions = { cachePolicy?: CachePolicy; signal?: AbortSignal };
 export type ResolveOptions = { pixelWidth?: number; pixelHeight?: number; cachePolicy?: CachePolicy; signal?: AbortSignal; appearance?: Appearance; arm?: string };
 export type AssetPageOptions = { cursor?: string; limit?: number; sequence?: number; signal?: AbortSignal };
 export type AssetPage = { items: readonly DynamicAssetRef[]; nextCursor: string | null; sequence: number };
@@ -32,10 +42,10 @@ export type AssetRendition = { sha256: string; url: string; mime: AssetMime; byt
 /** `rendering` is absent for original artwork; a well-formed value this client does not know makes only that descriptor incompatible. */
 export type AssetDescriptor = { assetId: string; sha256: string; url: string; mime: 'image/webp'; bytes: number; renditions?: AssetRendition[]; accessibility?: AssetAccessibility; rendering?: string };
 export type ManifestCell = AssetDescriptor & { appearance?: Appearance; arm?: string; states?: Record<string, AssetDescriptor> };
-export type ManifestSlot = AssetDescriptor & { key: string; screen: string; width: number; height: number; animation?: AnimationDescriptor; states?: Record<string, AssetDescriptor>; defaultState?: string; variants?: AssetVariants; cells?: ManifestCell[] };
+export type ManifestSlot = AssetDescriptor & { key: string; screen: string; width: number; height: number; animation?: AnimationDescriptor; video?: VideoDescriptor; states?: Record<string, AssetDescriptor>; defaultState?: string; variants?: AssetVariants; cells?: ManifestCell[] };
 export type CatalogAsset = AssetDescriptor & { width: number; height: number; name?: string };
 export type AssetPagePayload = { kind: 'asset-page'; schemaVersion: 1; renditionSchemaVersion?: 1; orgId: string; appId: string; environment: 'staging' | 'production'; sequence: number; createdAt: string; assets: CatalogAsset[]; cursor: string | null; nextCursor: string | null };
-export type ManifestPayload = { schemaVersion: 1; renditionSchemaVersion?: 1; animationSchemaVersion?: 1; stateSchemaVersion?: 1; catalogSchemaVersion?: 1; variantSchemaVersion?: 1; orgId: string; appId: string; environment: 'staging' | 'production'; sequence: number; createdAt: string; slots: ManifestSlot[]; catalog?: { url: string; count: number } };
+export type ManifestPayload = { schemaVersion: 1; renditionSchemaVersion?: 1; animationSchemaVersion?: 1; videoSchemaVersion?: 1; stateSchemaVersion?: 1; catalogSchemaVersion?: 1; variantSchemaVersion?: 1; orgId: string; appId: string; environment: 'staging' | 'production'; sequence: number; createdAt: string; slots: ManifestSlot[]; catalog?: { url: string; count: number } };
 export type AssetStorage = {
   /** Atomically read or create an opaque install ID under this dedicated metadata key.
    * Keep it outside the evictable image cache and signed replay state. Optional for
@@ -47,8 +57,11 @@ export type AssetStorage = {
   /** Opaque 64-hex identity; arm/appearance-scoped keys are not the content SHA-256. */
   getAsset(cacheKey: string): Promise<Uint8Array | null>;
   putAsset(cacheKey: string, bytes: Uint8Array, mime?: StorageMime): Promise<void>;
+  /** Optional: the local file URI of a cached entry, or null. An adapter with this method plays clips from
+   * files, so `resolveVideo` returns `uri` instead of bytes and needs the `disk` cache policy. */
+  getAssetFileUri?(cacheKey: string, mime: StorageMime): Promise<string | null>;
 };
 export type FallbackReason = 'offline' | 'verification' | 'decode' | 'missing' | 'other';
 export type TelemetryBuild = { platform: 'ios' | 'android' | 'web' | 'expo'; appVersion: string; buildNumber: string };
 export type TelemetryOptions = { enabled: boolean; /** An opaque, random per-install identifier, never a device or user identifier. */ installId?: string; flushIntervalMs?: number; maxBatch?: number; build?: TelemetryBuild; sdk?: { name: string; version: string } };
-export type ClientOptions = { storage: AssetStorage; fetch?: typeof globalThis.fetch; allowInsecureLoopback?: boolean; timeoutMs?: number; /** Decision callback deadline in milliseconds: 100-10000, default 1500. */ decisionTimeoutMs?: number; cachePolicy?: CachePolicy; maxConcurrentDownloads?: number; telemetry?: TelemetryOptions; /** Assignment only; the app's experiment tool logs exposure after rendering. */ decide?: (request: { key: string; arms: readonly string[]; appearance?: Appearance }) => string | undefined | Promise<string | undefined>; /** SVG is opt-in and requires a renderer suitable for normalized SVG image data. */ formats?: readonly AssetMime[] };
+export type ClientOptions = { storage: AssetStorage; fetch?: typeof globalThis.fetch; allowInsecureLoopback?: boolean; timeoutMs?: number; /** Clip download deadline in milliseconds: 20-30000, default 30000. */ videoTimeoutMs?: number; /** Decision callback deadline in milliseconds: 100-10000, default 1500. */ decisionTimeoutMs?: number; cachePolicy?: CachePolicy; maxConcurrentDownloads?: number; telemetry?: TelemetryOptions; /** Assignment only; the app's experiment tool logs exposure after rendering. */ decide?: (request: { key: string; arms: readonly string[]; appearance?: Appearance }) => string | undefined | Promise<string | undefined>; /** SVG is opt-in and requires a renderer suitable for normalized SVG image data. */ formats?: readonly AssetMime[] };

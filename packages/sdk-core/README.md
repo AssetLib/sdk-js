@@ -202,6 +202,27 @@ Limits: UTF-8 JSON up to 512 KiB, dimensions 1–2048, at most 4,194,304 pixels,
 
 Verified cached animation works offline. Only the current descriptor may trigger a download; if it fails, retained historical releases may supply an already cached compatible animation. Historical bytes are reverified and never downloaded. If the current release removes animation or its placement, resolution returns `source: 'poster'` immediately instead of reviving an old animation. First-use offline and unsupported/failed animations also return that poster outcome.
 
+## Short looping video
+
+A placement can carry a short, muted, looping MP4 clip beside its required still poster. `resolveVideo` is explicit; ordinary `resolve(ref)` never downloads a clip. This has been checked only by Node unit tests; it has not been verified on a device, simulator or emulator.
+
+```ts
+const clip = await client.resolveVideo(AppAssets.Cards.gold, { signal });
+if (clip.source === 'poster') {
+  // Show the poster: ordinary client.resolve(ref), then the bundled fallback.
+} else {
+  // clip.uri (file-backed adapters) or clip.bytes: a verified MP4 for the app's player.
+}
+```
+
+Success returns `{ source: 'remote' | 'cache', sequence, message, sha256, assetId, mime: 'video/mp4', width, height, durationMs, frameRate, bytes?, uri? }`; anything else returns `{ source: 'poster', sequence: null, message }`. Only the base placement's clip is used, never a variant cell or state member.
+
+- **Signed descriptor.** The optional top-level `videoSchemaVersion: 1` enables `video` on base placements: `format: 'mp4'`, `profile: 'h264-loop-v1'`, `mime: 'video/mp4'`, lowercase SHA-256, `bytes` 1–4,194,304 (`SDK_LIMITS.videoBytes`), even integer `width` and `height` of 16–1280 with at most 921,600 pixels and exactly the placement's aspect ratio, integer `durationMs` of 1,000–10,000, a finite `frameRate` of 1–30, and the exact same-origin URL `/api/delivery/{orgId}/{appId}/assets/{assetId}/videos/{sha256}` with no credentials, query or fragment. Any other `videoSchemaVersion` (including `null`), `video` without the marker, `video` together with `animation`, or `video` on a state member, variant cell or catalog page image rejects the release. Clients without video support ignore both fields and keep the poster.
+- **Checks before use.** Length and SHA-256 must match, then a bounded header check: `ftyp` first, `moov` before the first `mdat`, no `moof` or `mvex`, one track whose one sample entry is `avc1` at the signed width and height. No frame is decoded; the platform player still has to decode the clip. Cached clips are rehashed and rechecked on every read.
+- **Releases.** Only the current release downloads. If it has no clip for the placement, the result is the poster. If its clip can't be used (download failure or timeout, a failed check, or a missing cached file offline), verified cached clips of the same placement from older retained releases are tried newest first, without downloading, then the poster.
+- **Deadline.** Clips have their own deadline, `videoTimeoutMs` (default 30,000 ms, 20–30,000), separate from the image `timeoutMs`. Clip downloads share the client's concurrent transfer limit (default 4) with images. `signal` cancels.
+- **Storage.** Clips are cached under their SHA-256 through the storage adapter with `StorageMime` `'video/mp4'`, inside the same 50 MiB / 100 entry budget. An adapter that implements `getAssetFileUri(cacheKey, mime)` declares that its player opens files: `resolveVideo` then returns `uri` instead of `bytes`, and returns the poster under the `memory` and `none` policies without downloading. Otherwise `bytes` are returned under every policy.
+
 ## Verification and operating limits
 
 - Ed25519 signatures are checked against an independently pinned key from the configured single key or set using strict RFC 8032 verification. An envelope cannot add or replace a pinned key.
@@ -209,7 +230,7 @@ Verified cached animation works offline. Only the current descriptor may trigger
 - Public config: at most 4096 UTF-8 JSON bytes, 1–16 distinct exact-PEM pins, and 256 UTF-8 bytes per Ed25519 SPKI PEM. These limits are exported as `SDK_LIMITS.configBytes`, `pinnedKeys`, and `publicKeyBytes`.
 - HTTPS is required. `{ allowInsecureLoopback: true }` permits HTTP only for `localhost`, `127.0.0.1`, or `::1`; it does not permit arbitrary LAN hosts.
 - Delivery is credentialless. Redirects are rejected. A streaming Fetch implementation is required so chunked responses can be bounded. The Expo adapter uses `expo/fetch` on native.
-- Default deadline: 8 seconds per request; configurable from 20 milliseconds to 30 seconds. Maximum manifest response: 256 KiB. Maximum image: 8 MiB. Maximum placements: 100.
+- Default deadline: 8 seconds per request; configurable from 20 milliseconds to 30 seconds. Clips use `videoTimeoutMs` instead (default 30 seconds, same range). Maximum manifest response: 256 KiB. Maximum image: 8 MiB. Maximum clip: 4 MiB. Maximum placements: 100.
 - Persistent state keeps the highest accepted sequence and eight signed releases, up to 3 MiB. A lower sequence or different payload reusing a sequence is rejected. Legitimate server rollback must publish a new, higher sequence.
 - A failed current image resolves to a compatible cached image from the retained release history, then to the app's bundled fallback. Older releases never cause a new download. Eviction or more than eight accepted releases can remove a previous fallback.
 - Cache bytes are rehashed before use. The supplied adapters bound image storage to 50 MiB and 100 entries per configuration. Persistence is required before activating a new release. Corrupt replay state fails closed; it is not automatically discarded.
@@ -224,7 +245,7 @@ npm test
 npm pack
 ```
 
-Tests include the shared cross-platform contract corpus (`test/fixtures/shared`, byte-identical with the Swift and Kotlin SDKs' copies: 115 signed manifest cases, 43 public config cases exercised as strings and objects, 18 appearance/arm resolution cases, 10 tintable icon rendering cases, staging configuration, stateful replay, byte-failure and rendition selection cases), separate JavaScript key-set fixtures for a second trusted signer and an untrusted signer, catalog subset requests, Lottie profile rejection/metadata verification, animation cache/offline/rollback/removal behavior, selection, PNG/SVG bytes and offline fallback, plus real Node Ed25519 signatures and bounded mock delivery streams. They cover signature and byte tampering, independent pins, replay across client restarts, corrupt storage, offline cache fallback, contract mismatch, URL boundaries, deadlines, and offline code generation. The npm pack contains built JavaScript and declarations; it does not require TypeScript compilation when installed.
+Tests include the shared cross-platform contract corpus (`test/fixtures/shared`, byte-identical with the Swift and Kotlin SDKs' copies: 142 signed manifest cases, 43 public config cases exercised as strings and objects, 18 appearance/arm resolution cases, 10 tintable icon rendering cases, 2 video resolution and 2 video byte-failure cases, staging configuration, stateful replay, byte-failure and rendition selection cases), separate JavaScript key-set fixtures for a second trusted signer and an untrusted signer, catalog subset requests, Lottie profile rejection/metadata verification, animation cache/offline/rollback/removal behavior, clip header checks, current-only clip downloads, cache-only clip history and the clip deadline, selection, PNG/SVG bytes and offline fallback, plus real Node Ed25519 signatures and bounded mock delivery streams. They cover signature and byte tampering, independent pins, replay across client restarts, corrupt storage, offline cache fallback, contract mismatch, URL boundaries, deadlines, and offline code generation. The npm pack contains built JavaScript and declarations; it does not require TypeScript compilation when installed.
 
 ## State sets, catalog pages, and cache policies
 
