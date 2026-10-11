@@ -21,7 +21,7 @@ Read `--help` for the full option list, then choose scope deliberately:
 
 - `--assets <path>`, repeatable, restricts images to known artwork folders so screenshots, documentation media, and test fixtures are not counted as shipped artwork.
 - `--references <path>`, repeatable, opts into scanning quoted filename literals in a source directory. Keep it narrow.
-- `--history` opts into counting how often in-scope images changed on the checked-out commit's first-parent git history over the past 365 days (`--history-days` sets the window), split into artwork, icons and logos, and app icons. It needs git 2.44 or later, runs local git only, and reads commit times and paths, never messages or authors. It measures churn in source control, not whether a change could have shipped without an app release.
+- `--history` opts into counting how often in-scope images changed on the checked-out commit's first-parent git history in the 365 days ending at that commit's date, not today (`--history-days` sets the length), split into artwork, icons and logos, and app icons. It needs git 2.44 or later, runs local git only, and reads commit times and paths, never messages or authors. It measures churn in source control, not whether a change could have shipped without an app release.
 - `--long-edge`, `--max-files`, `--max-entries`, `--max-file-bytes`, and `--max-bytes` bound the scan.
 
 Exit code 0 means the declared scope completed. Exit code 2 means coverage is partial and the report is valid only for the scanned subset. Exit code 1 means invalid input. Inspect `coverage`, `skipped`, and `issues` in the JSON before interpreting findings. Do not print source-file contents, credentials, or absolute paths from the user's machine in your summary.
