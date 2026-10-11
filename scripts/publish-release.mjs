@@ -94,7 +94,13 @@ for (const item of tarballs) sums.push(`${digest('sha256', await readFile(item.f
 await writeFile(path.join(directory, 'SHA256SUMS'), sums.join('\n') + '\n');
 
 // Attach to the GitHub release. A tarball already attached must be byte-identical; SHA256SUMS is rewritten.
-const attached = JSON.parse(run('gh', ['release', 'view', tag, '--json', 'assets'])).assets.map(asset => asset.name);
+let attached;
+try { attached = JSON.parse(run('gh', ['release', 'view', tag, '--json', 'assets'])).assets.map(asset => asset.name); }
+catch (error) {
+  if (!dryRun || !/release not found/i.test(String(error.stderr))) throw error;
+  console.log(`The ${tag} release does not exist yet.`);
+  attached = [];
+}
 const upload = [];
 for (const item of tarballs) {
   if (!attached.includes(item.file)) { upload.push(item.full); continue; }

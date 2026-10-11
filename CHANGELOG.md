@@ -1,7 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.6.1-preview.1 — October 11, 2026
 
+- `@assetlib/sdk-core` and `@assetlib/sdk-expo` change only their version. `@assetlib/cli` 0.3.1 and `@assetlib/audit` 0.2.0 are unchanged.
 - Releases publish to npm from the `Release to npm` GitHub workflow with npm trusted publishing, so npm shows provenance for versions it publishes. It refuses a version already on npm whose files differ, and attaches npm's own tarballs to the GitHub release.
 - The CLI README again names `v0.5.3-preview.1`, the release that first shipped `@assetlib/cli` 0.3.1, so the CLI packed from `main` matches npm's 0.3.1. It changes only when the CLI version does.
 
