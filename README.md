@@ -66,7 +66,7 @@ Since 0.4.0-preview.1 the SDKs resolve appearance and arm variants, with an opti
 The read-only audit is on npm as [`@assetlib/audit`](https://www.npmjs.com/package/@assetlib/audit). With Node 22+:
 
 ```sh
-npx -y @assetlib/audit@0.1.0 /path/to/app --assets assets --references src --json
+npx -y @assetlib/audit@0.2.0 /path/to/app --assets assets --references src --json
 ```
 
 Or from this checkout after `npm ci`:

@@ -3,7 +3,7 @@ import { parseArgs } from 'node:util';
 import { auditAssets, formatReport } from '../src/audit.mjs';
 
 const help = `Usage: assetlib-audit <app-root> [options]
-       npx -y @assetlib/audit@0.1.0 <app-root> [options]
+       npx -y @assetlib/audit@0.2.0 <app-root> [options]
 
 Read-only, local PNG/JPEG/WebP inventory.
 
@@ -20,8 +20,7 @@ Read-only, local PNG/JPEG/WebP inventory.
   --history                 Count first-parent git changes to in-scope images
                             (also SVG, asset-catalog PDF, Lottie) in the window
                             ending at the checked-out commit, by artwork, icons
-                            and logos, and app icons. Needs git 2.44+. Not in
-                            0.1.0 on npm; run from a clone until the next release
+                            and logos, and app icons. Needs git 2.44+
   --history-days <days>     History window in days (default: 365; implies
                             --history)
   --help                    Print this help

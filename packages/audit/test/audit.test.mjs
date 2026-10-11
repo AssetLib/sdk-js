@@ -192,7 +192,8 @@ test('CLI returns complete/partial/error codes with parseable JSON and no files 
   assert.equal(invalid.status, 1);
   assert.match(invalid.stderr, /positive integer/);
   const help = spawnSync(process.execPath, [cli, '--help'], { encoding: 'utf8' });
-  assert.equal(help.status, 0); assert.match(help.stdout, /npx -y @assetlib\/audit@0\.1\.0 <app-root>/); assert.doesNotMatch(help.stdout, /not published/);
+  const { version } = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
+  assert.equal(help.status, 0); assert.ok(help.stdout.includes(`npx -y @assetlib/audit@${version} <app-root>`)); assert.doesNotMatch(help.stdout, /not published|next release/);
   assert.deepEqual(await readdir(root), ['hero.png']);
 });
 

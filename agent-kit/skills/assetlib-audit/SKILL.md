@@ -12,7 +12,7 @@ Run the deterministic local audit before drawing conclusions about an app's artw
 Requires Node.js 22 or later. Use the pinned package so results are reproducible:
 
 ```sh
-npx -y @assetlib/audit@0.1.0 <app-root> --json
+npx -y @assetlib/audit@0.2.0 <app-root> --json
 ```
 
 The first run fetches `@assetlib/audit` and its single dependency from the npm registry. Say so before running if network use matters to the user. The audit itself makes no network calls. If a clone of https://github.com/AssetLib/sdk-js is available, `node <checkout>/packages/audit/bin/assetlib-audit.mjs <app-root> --json` runs the same code without a registry fetch. Do not substitute a different package or an unpinned version.
@@ -21,6 +21,7 @@ Read `--help` for the full option list, then choose scope deliberately:
 
 - `--assets <path>`, repeatable, restricts images to known artwork folders so screenshots, documentation media, and test fixtures are not counted as shipped artwork.
 - `--references <path>`, repeatable, opts into scanning quoted filename literals in a source directory. Keep it narrow.
+- `--history` opts into counting how often in-scope images changed on the checked-out commit's first-parent git history over the past 365 days (`--history-days` sets the window), split into artwork, icons and logos, and app icons. It needs git 2.44 or later, runs local git only, and reads commit times and paths, never messages or authors. It measures churn in source control, not whether a change could have shipped without an app release.
 - `--long-edge`, `--max-files`, `--max-entries`, `--max-file-bytes`, and `--max-bytes` bound the scan.
 
 Exit code 0 means the declared scope completed. Exit code 2 means coverage is partial and the report is valid only for the scanned subset. Exit code 1 means invalid input. Inspect `coverage`, `skipped`, and `issues` in the JSON before interpreting findings. Do not print source-file contents, credentials, or absolute paths from the user's machine in your summary.

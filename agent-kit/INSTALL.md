@@ -15,4 +15,4 @@ This folder keeps a copy of the same skill for use directly from a checkout of t
 
 > Read `<sdk-js-checkout>/agent-kit/skills/assetlib-audit/SKILL.md` and audit `<my-app-repository>`. Explain measured image sizes, exact duplicates, dimension candidates, and reference coverage. Recommend at most three artwork placements for a possible migration, and preserve existing bundled fallbacks. Treat missing references as unresolved. Do not delete or upload assets.
 
-The skill runs `npx -y @assetlib/audit@0.1.0`. To run the checkout's own code instead, use `node packages/audit/bin/assetlib-audit.mjs <app-root> --json` after `npm ci`. Neither path connects to a hosted workspace, publishes releases, or installs a delivery SDK.
+The skill runs `npx -y @assetlib/audit@0.2.0`. To run the checkout's own code instead, use `node packages/audit/bin/assetlib-audit.mjs <app-root> --json` after `npm ci`. Neither path connects to a hosted workspace, publishes releases, or installs a delivery SDK.
