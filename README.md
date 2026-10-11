@@ -25,8 +25,8 @@ Use both exact tarball URLs from the matching GitHub release. The core package i
 
 ```sh
 npm install \
-  https://github.com/AssetLib/sdk-js/releases/download/v0.5.1-preview.1/assetlib-sdk-core-0.5.1-preview.1.tgz \
-  https://github.com/AssetLib/sdk-js/releases/download/v0.5.1-preview.1/assetlib-sdk-expo-0.5.1-preview.1.tgz
+  https://github.com/AssetLib/sdk-js/releases/download/v0.5.2-preview.1/assetlib-sdk-core-0.5.2-preview.1.tgz \
+  https://github.com/AssetLib/sdk-js/releases/download/v0.5.2-preview.1/assetlib-sdk-expo-0.5.2-preview.1.tgz
 npx expo install expo-file-system expo-image
 ```
 
