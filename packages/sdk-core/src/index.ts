@@ -421,6 +421,9 @@ export class AssetClient {
     const resolvedOptions = { ...options, arm: decision.arm };
     let message = this.storageFailure ?? 'No compatible published artwork is available.';
     let reason: FallbackReason = this.storageFailure ? 'verification' : !history.length && this.lastError ? this.lastRefreshReason : 'missing';
+    // Membership is decided by the latest accepted release alone: a key it does not
+    // publish has no artwork, so neither the cache nor an older release is consulted.
+    if (!this.storageFailure && history.length && !history[0].payload.slots.some(item => item.key === ref.key)) return this.observed(ref, { source: 'bundle', sequence: null, arm: null, armSource: decision.armSource, fallbackReason: 'missing', message: decisionMessage('Using bundled artwork. The current release does not publish this placement.', decision), ...(ref.bundledAccessibility ? { accessibility: ref.bundledAccessibility } : {}) });
     for (const [index, { payload }] of history.entries()) {
       const slot = payload.slots.find(matches);
       if (!slot) continue;
@@ -443,6 +446,7 @@ export class AssetClient {
     throwIfAborted(options.signal);
     const resolvedOptions = { ...options, arm: decision.arm };
     let reason: FallbackReason = this.storageFailure ? 'verification' : !history.length && this.lastError ? this.lastRefreshReason : 'missing';
+    if (!this.storageFailure && history.length && !history[0].payload.slots.some(item => item.key === ref.key)) return this.observed(ref, { source: 'bundle', sequence: null, arm: null, armSource: decision.armSource, fallbackReason: 'missing', message: decisionMessage('Using the complete bundled state set. The current release does not publish this placement.', decision), states: Object.freeze({}) });
     for (const [index, { payload }] of history.entries()) {
       const placement = payload.slots.find(matches);
       const selected = placement && variantSlot(placement, decision.arm, options.appearance);

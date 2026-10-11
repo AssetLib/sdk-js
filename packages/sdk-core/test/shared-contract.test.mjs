@@ -500,3 +500,61 @@ test('every malformed video manifest in the shared corpus is rejected', () => {
   assert.ok(malformed.length >= 25);
   for (const item of malformed) assert.equal(item.verification, 'reject', item.file);
 });
+
+// Placement membership (history.json, contract revision of 2026-10-11): only the latest
+// accepted release decides whether a placement has published artwork. Each case accepts its
+// releases in order from empty state, seeds the cache by SHA-256 and counts asset and clip
+// requests during one resolution.
+const history = await json('history.json');
+test('shared history cases cover removal and the history controls', () => {
+  assert.ok(history.cases.length >= 10);
+  for (const expect of ['bundled', 'cache', 'remote', 'poster']) assert.ok(history.cases.some(item => item.expect === expect), expect);
+  for (const item of history.cases) for (const file of item.releases) assert.equal(cases.manifests.find(value => value.file === file)?.verification, 'accept', file);
+});
+for (const item of history.cases) {
+  test(`shared history ${item.name}: ${item.resolve} ${item.ref.key} gives ${item.expect}`, async () => {
+    const storage = createMemoryStorage(), requests = [];
+    const seeded = [];
+    for (const file of [...item.cached, ...item.cachedVideos]) {
+      const body = await bytes(file);
+      await storage.putAsset(sha256(body), body);
+      seeded.push(sha256(body));
+    }
+    let current;
+    const fetch = async url => {
+      if (url === config.manifestUrl) return new Response(JSON.stringify(current));
+      requests.push(url);
+      if (item.network === 'offline') throw new Error('Fixture network is offline.');
+      const body = clipBodies.get(url.split('/').at(-1));
+      return body ? new Response(body) : new Response(null, { status: 404 });
+    };
+    const client = new AssetClient(config, { storage, fetch });
+    for (const file of item.releases) {
+      current = await json(file);
+      assert.deepEqual(await client.refresh(), { updated: true, sequence: verifySignedManifest(current, config).payload.sequence }, file);
+    }
+    requests.length = 0;
+    const state = await storage.loadState();
+    const result = item.resolve === 'video' ? await client.resolveVideo(item.ref) : await client.resolve(item.ref);
+    assert.equal(result.source, item.expect === 'bundled' ? 'bundle' : item.expect, result.message);
+    assert.equal(requests.length, item.assetRequests, 'Asset and clip requests during this resolution.');
+    const latest = verifySignedManifest(current, config).payload.slots.flatMap(slot => [slot.url, slot.video?.url]).filter(Boolean).map(url => new URL(url, config.manifestUrl).href);
+    for (const url of requests) assert.ok(latest.includes(url), `Only the latest accepted release may download: ${url}`);
+    assert.equal(client.getStatus().sequence, item.highestSequence);
+    assert.equal(await storage.loadState(), state, 'Resolution never changes durable state.');
+    for (const hash of seeded) assert.notEqual(await storage.getAsset(hash), null, 'Resolution never deletes cached bytes.');
+    if (item.expect === 'bundled' || item.expect === 'poster') {
+      assert.equal(result.sequence, null);
+      assert.equal(result.bytes, undefined);
+      if (item.expect === 'bundled') assert.equal(result.fallbackReason, 'missing');
+      return;
+    }
+    assert.equal(result.sequence, item.sequence);
+    assert.equal(result.assetId, item.assetId);
+    if (item.resolve === 'image') {
+      const asset = Object.values(assets).find(value => value.assetId === item.assetId);
+      assert.equal(result.sha256, asset.sha256);
+      assert.deepEqual(Buffer.from(result.bytes), await bytes(asset.file));
+    }
+  });
+}
