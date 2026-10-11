@@ -409,17 +409,18 @@ export async function auditAssets(rootPath, options = {}) {
 
 // Paths come from the checkout; control characters are escaped so a file name cannot drive the terminal.
 const printable = value => value.replace(/[\x00-\x1f\x7f-\x9f]/g, character => `\\x${character.charCodeAt(0).toString(16).padStart(2, '0')}`);
+const count = (n, noun) => `${n} ${n === 1 ? noun : `${noun}s`}`;
 
 export function formatReport(report) {
   const { summary, coverage } = report;
-  const lines = ['Assetlib local asset audit', '', `Coverage: ${coverage.status.replaceAll('_', ' ')}`, `${summary.assets} images · ${summary.measuredBytes.toLocaleString('en-US')} measured bytes`, `${summary.duplicateGroups} exact duplicate groups · ${summary.dimensionCandidates} dimension candidates`, `Source files examined: ${coverage.sourceFilesRead}; literal hints only.`, ''];
+  const lines = ['Assetlib local asset audit', '', `Coverage: ${coverage.status.replaceAll('_', ' ')}`, `${count(summary.assets, 'image')} · ${summary.measuredBytes.toLocaleString('en-US')} measured bytes`, `${count(summary.duplicateGroups, 'exact duplicate group')} · ${count(summary.dimensionCandidates, 'dimension candidate')}`, `Source files examined: ${coverage.sourceFilesRead}; literal hints only.`, ''];
   for (const asset of report.assets.slice(0, 20)) {
     lines.push(`${printable(asset.path)} — ${asset.dimensions ? `${asset.dimensions.width}×${asset.dimensions.height}` : 'dimensions unavailable'} — ${asset.bytes} bytes${asset.dimensionCandidate ? ' — dimension candidate' : ''}`);
     if (asset.references.status === 'literal_reference_hint_found') {
       lines.push(`  Literal hints: ${asset.references.hints.slice(0, 3).map(hint => `${printable(hint.path)}:${hint.line}`).join(', ')}${asset.references.hints.length > 3 || asset.references.truncated ? ' (more hints; see JSON)' : ''}`);
     } else if (asset.references.status === 'no_literal_reference_found') lines.push('  No literal reference found in the examined source scope; usage unknown.');
   }
-  if (report.assets.length > 20) lines.push(`… ${report.assets.length - 20} additional images; use --json for the complete bounded report.`);
+  if (report.assets.length > 20) lines.push(`… ${count(report.assets.length - 20, 'additional image')}; use --json for the complete bounded report.`);
   if (report.duplicateGroups.length) {
     lines.push('', 'Exact duplicate groups (review dependencies before changing files):');
     for (const group of report.duplicateGroups.slice(0, 20)) lines.push(`  ${group.paths.map(printable).join(' = ')}`);
@@ -429,16 +430,16 @@ export function formatReport(report) {
   else if (history) {
     const { artwork, iconsAndLogos, appIconsLaunchAndStore, fileChangesByFormat: formats } = history;
     lines.push('', `History, ${history.window.days} days to ${history.window.end} (first-parent; density and dark-mode copies count once):`,
-      `  Artwork: ${artwork.changes} of ${history.changesUnderRoot} changes under the root, ${artwork.imageOnlyChanges} of them image-only; ${artwork.images} image(s) in ${artwork.monthsWithChanges} month(s); the largest change touched ${artwork.maxImagesInOneChange}.`,
-      `  Icons and logos: ${iconsAndLogos.changes} change(s), ${iconsAndLogos.images} image(s). App icons, launch and store art: ${appIconsLaunchAndStore.changes} change(s), ${appIconsLaunchAndStore.images} image(s).`,
+      `  Artwork: ${artwork.changes} of ${count(history.changesUnderRoot, 'change')} under the root, ${artwork.imageOnlyChanges} of them image-only; ${count(artwork.images, 'image')} in ${count(artwork.monthsWithChanges, 'month')}; the largest change touched ${count(artwork.maxImagesInOneChange, 'image')}.`,
+      `  Icons and logos: ${count(iconsAndLogos.changes, 'change')}, ${count(iconsAndLogos.images, 'image')}. App icons, launch and store art: ${count(appIconsLaunchAndStore.changes, 'change')}, ${count(appIconsLaunchAndStore.images, 'image')}.`,
       `  Files changed: ${formats.raster} PNG/JPEG/WebP, ${formats.vector} SVG/PDF, ${formats.animation} Lottie.`);
     if (history.mostChangedArtwork.length) {
       lines.push('Most changed artwork:');
-      for (const entry of history.mostChangedArtwork.slice(0, 10)) lines.push(`  ${printable(entry.image)} — ${entry.changes} change(s), last ${entry.lastChanged}`);
+      for (const entry of history.mostChangedArtwork.slice(0, 10)) lines.push(`  ${printable(entry.image)} — ${count(entry.changes, 'change')}, last ${entry.lastChanged}`);
     }
   }
   if (coverage.issues.length) {
-    lines.push('', `Partial coverage: ${coverage.issues.length} issue(s).`);
+    lines.push('', `Partial coverage: ${count(coverage.issues.length, 'issue')}.`);
     for (const issue of coverage.issues.slice(0, 20)) lines.push(`  ${printable(issue.path)}: ${issue.reason}`);
   }
   lines.push('', ...report.interpretation);

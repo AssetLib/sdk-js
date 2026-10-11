@@ -12,7 +12,7 @@ Run the deterministic local audit before drawing conclusions about an app's artw
 Requires Node.js 22 or later. Use the pinned package so results are reproducible:
 
 ```sh
-npx -y @assetlib/audit@0.2.0 <app-root> --json
+npx -y @assetlib/audit@0.2.1 <app-root> --json
 ```
 
 The first run fetches `@assetlib/audit` and its single dependency from the npm registry. Say so before running if network use matters to the user. The audit itself makes no network calls. If a clone of https://github.com/AssetLib/sdk-js is available, `node <checkout>/packages/audit/bin/assetlib-audit.mjs <app-root> --json` runs the same code without a registry fetch. Do not substitute a different package or an unpinned version.

@@ -9,10 +9,10 @@ Distributed on npm as [`@assetlib/audit`](https://www.npmjs.com/package/@assetli
 Requires Node.js 22 or later. Pin the exact version so results are reproducible:
 
 ```sh
-npx -y @assetlib/audit@0.2.0 /path/to/your-app
-npx -y @assetlib/audit@0.2.0 /path/to/your-app --references src --json
-npx -y @assetlib/audit@0.2.0 /path/to/your-app --assets public --references src
-npx -y @assetlib/audit@0.2.0 /path/to/your-app --long-edge 2048 --max-files 500
+npx -y @assetlib/audit@0.2.1 /path/to/your-app
+npx -y @assetlib/audit@0.2.1 /path/to/your-app --references src --json
+npx -y @assetlib/audit@0.2.1 /path/to/your-app --assets public --references src
+npx -y @assetlib/audit@0.2.1 /path/to/your-app --long-edge 2048 --max-files 500
 ```
 
 The first run downloads the package and its one dependency from the npm registry. **The audit itself has no network calls, telemetry, account, upload, transforms, deletion, or source rewrites.** Reports go to stdout; the text report escapes control characters in file names. If you choose shell redirection to save a report, use a destination that will not overwrite an existing file.
@@ -49,8 +49,8 @@ Dimensions are extracted by [`image-size`](https://codeberg.org/image-size/image
 Added in 0.2.0:
 
 ```sh
-npx -y @assetlib/audit@0.2.0 /path/to/your-app --assets assets --history
-npx -y @assetlib/audit@0.2.0 /path/to/your-app --history-days 180 --json
+npx -y @assetlib/audit@0.2.1 /path/to/your-app --assets assets --history
+npx -y @assetlib/audit@0.2.1 /path/to/your-app --history-days 180 --json
 ```
 
 `--history` (or `history: true` in the API) answers how often the app's artwork actually changes. It runs local `git log` in the audit root and counts changes on the first-parent line of the checked-out commit: a merge commit counts once with everything it brought in, while a rebased or fast-forwarded pull request counts once per commit. A change counts when it added, modified, or deleted an in-scope image file, including images that no longer exist. In scope means the `--assets` selection and the same hidden and ignored-directory rules as the inventory. History counts more formats than the inventory: PNG, JPEG, WebP, SVG, PDF inside an asset-catalog `.imageset`, and Lottie (`.lottie`, or `.json` under a path that names `lottie`, `animation`, or `anim`). It does not count GIF, HEIC, AVIF, or Android vector drawable XML. The window is `--history-days` long (default 365, at most 3650) and ends at the checked-out commit's date, not today's, so the same checkout gives the same report. Every first-parent commit is checked against the window by its committer date, so a commit with a wrong clock neither hides older changes nor pulls in changes dated after the checked-out commit. In a shallow clone whose history ends inside the window, the cut-off commit itself is not counted, because git cannot tell what it changed. Changes inside a git submodule belong to that submodule's repository and are not counted; a submodule in scope makes history partial, and its images get `history: null`.

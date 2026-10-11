@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.3-preview.1 — October 11, 2026
+
+- `@assetlib/audit` 0.2.1: the text report writes counts in the singular and plural ("1 exact duplicate group", "2 dimension candidates", "1 change") instead of always plural or "(s)". The JSON report is unchanged.
+- `@assetlib/sdk-core` and `@assetlib/sdk-expo` change only their version and README: they now record the October 11, 2026 checks of short looping video on an iOS 27 Simulator, an Android 16 emulator and headless Chrome, including cached `file://` playback with expo-video 57.0.5. No physical device was tested. `@assetlib/cli` 0.3.1 is unchanged.
+
 ## 0.6.2-preview.1 — October 11, 2026
 
 - `@assetlib/sdk-expo`: on web, `AssetlibVideo` drew the clip at its intrinsic size, so a 1280×720 clip showed only its top-left corner inside a smaller placement. expo-video's web player puts the component's style on the `<video>` element, and absolute positioning alone does not size a video element. The clip now also gets an explicit 100% width and height, so it fills the placement the way the poster does. iOS and Android were unaffected. Found by an end-to-end browser check of an Expo web export in Chrome on October 11, 2026; the Expo native builds on an iOS 27 Simulator and an Android 16 emulator played the cached clip correctly in the same run.

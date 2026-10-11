@@ -204,7 +204,7 @@ Verified cached animation works offline. Only the current descriptor may trigger
 
 ## Short looping video
 
-A placement can carry a short, muted, looping MP4 clip beside its required still poster. `resolveVideo` is explicit; ordinary `resolve(ref)` never downloads a clip. This has been checked only by Node unit tests; it has not been verified on a device, simulator or emulator.
+A placement can carry a short, muted, looping MP4 clip beside its required still poster. `resolveVideo` is explicit; ordinary `resolve(ref)` never downloads a clip. On October 11, 2026 it was exercised through the Expo `AssetlibVideo` component on an iOS 27 Simulator and an Android 16 emulator (0.6.0-preview.1) and in headless Chrome 154 (0.6.2-preview.1); it has not been tested on a physical device.
 
 ```ts
 const clip = await client.resolveVideo(AppAssets.Cards.gold, { signal });

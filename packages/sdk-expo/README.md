@@ -192,7 +192,7 @@ There is no automatic app-data reset API: disconnect the client to show bundled 
 
 ## Short looping video
 
-`AssetlibVideo` shows a placement's poster and plays its signed short looping MP4 clip over it. It ships from a separate entry point so `expo-video` stays an optional peer dependency; importing `@assetlib/sdk-expo` never loads it. **This has not been verified on a device, simulator, emulator or browser**; it is covered by Node unit tests with a simulated player only.
+`AssetlibVideo` shows a placement's poster and plays its signed short looping MP4 clip over it. It ships from a separate entry point so `expo-video` stays an optional peer dependency; importing `@assetlib/sdk-expo` never loads it. On October 11, 2026 it was checked with expo-video 57.0.5 on an iOS 27 Simulator and an Android 16 emulator (0.6.0-preview.1), and in headless Chrome 154 (0.6.2-preview.1). The checks covered playback from the SDK's cache, looping, offline replay and reduced motion. It has not been tested on a physical device.
 
 ```sh
 npx expo install expo-video
@@ -217,7 +217,7 @@ import { AssetlibVideo } from '@assetlib/sdk-expo/video';
 - **Failures.** A missing clip, a failed check, a player error, or a rejected web `play()` (autoplay blocked, for example in iOS Low Power Mode) shows the poster until the request changes (client, asset, `revision` or `cachePolicy`).
 - **iOS and Android.** The native adapter caches verified clips as `<sha256>.mp4` in the namespaced cache directory (at most 4 MiB each, inside the 50 MiB / 100 entry budget) and the core returns the file's `file://` URI. Under the `memory` and `none` policies `resolveVideo` returns the poster without downloading, because the player needs a file.
 - **Web.** Verified bytes from IndexedDB, memory or the network become a `video/mp4` Blob URL, revoked when the clip changes or the component unmounts.
-- **Open risk.** `expo-video` documents `require()` assets and media-library URIs as local sources, not plain `file://` URIs. Its 57.0.5 source passes a string URI through unchanged: iOS builds an `AVURLAsset` from it (only `ph://` is special-cased) and Android hands it to Media3's `DefaultDataSource`, which reads `file://` URIs. Whether a cached file plays on devices is unverified.
+- **Cached `file://` clips.** `expo-video` documents `require()` assets and media-library URIs as local sources, not plain `file://` URIs. Its 57.0.5 source passes a string URI through unchanged. On October 11, 2026 it played the SDK's cached `file://` clip on an iOS 27 Simulator and an Android 16 emulator, both right after the download and offline after a relaunch. Physical devices and other expo-video versions are unverified.
 - Limits and the signed descriptor are in the core README's [Short looping video](../sdk-core/README.md#short-looping-video) section. `createExpoAssetClient(config, { videoTimeoutMs })` sets the clip deadline.
 
 
@@ -237,7 +237,7 @@ await client.flush();
 client.dispose(); // Remove the AppState listener and stop observation timers.
 ```
 
-The adapter identifies itself as `sdk-expo` version `0.6.2-preview.1`. An explicit `telemetry.sdk` or `telemetry.build` takes precedence. When the runtime can optionally require `expo-application` or `expo-constants`, the adapter reads native app version and build number (falling back to Expo config version/build). Missing packages, unavailable runtime loaders, and throwing native bridges are ignored; no new dependency is required. Supply `build` explicitly for reliable production attribution, especially with bundlers that cannot resolve optional runtime requires or in Expo Go. Without complete runtime metadata or an explicit build, batches use platform `expo` and version/build `unknown`.
+The adapter identifies itself as `sdk-expo` version `0.6.3-preview.1`. An explicit `telemetry.sdk` or `telemetry.build` takes precedence. When the runtime can optionally require `expo-application` or `expo-constants`, the adapter reads native app version and build number (falling back to Expo config version/build). Missing packages, unavailable runtime loaders, and throwing native bridges are ignored; no new dependency is required. Supply `build` explicitly for reliable production attribution, especially with bundlers that cannot resolve optional runtime requires or in Expo Go. Without complete runtime metadata or an explicit build, batches use platform `expo` and version/build `unknown`.
 
 Only the observation contract fields are sent: environment, SDK name/version, build platform/version/number, random install ID, send time, and coalesced events with placement key, kind/count, source, asset ID/release sequence when known, effective arm/appearance when selected, and fallback reason. Bundle outcomes send only `fallback` events without asset ID or sequence. Dynamic catalog references do not emit observations because they have no placement key. Image bytes, descriptions, URLs, device identifiers, account identifiers, and status/error messages are not included.
 

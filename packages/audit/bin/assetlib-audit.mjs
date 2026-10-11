@@ -3,7 +3,7 @@ import { parseArgs } from 'node:util';
 import { auditAssets, formatReport } from '../src/audit.mjs';
 
 const help = `Usage: assetlib-audit <app-root> [options]
-       npx -y @assetlib/audit@0.2.0 <app-root> [options]
+       npx -y @assetlib/audit@0.2.1 <app-root> [options]
 
 Read-only, local PNG/JPEG/WebP inventory.
 

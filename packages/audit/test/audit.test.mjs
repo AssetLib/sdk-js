@@ -261,8 +261,10 @@ test('history counts first-parent image changes in a window anchored on the chec
   assert.equal(json.includes(git(root, ['rev-parse', 'HEAD']).trim().slice(0, 7)), false);
   assert.equal(json, JSON.stringify(await auditAssets(root, { history: true })));
   const text = formatReport(report);
-  assert.match(text, /Artwork: 5 of 7 changes under the root, 4 of them image-only; 4 image\(s\) in 4 month\(s\)/);
-  assert.match(text, /  assets\/hero — 2 change\(s\), last 2026-05-03/);
+  assert.match(text, /Artwork: 5 of 7 changes under the root, 4 of them image-only; 4 images in 4 months; the largest change touched \d+ images?\./);
+  assert.match(text, /  assets\/hero — 2 changes, last 2026-05-03/);
+  assert.match(text, /  assets\/card — 1 change, last 2026-05-03/);
+  assert.doesNotMatch(text, /\(s\)/);
   const narrow = await auditAssets(root, { history: true, historyDays: 60 });
   assert.deepEqual(narrow.history.window, { days: 60, start: '2026-03-04', end: '2026-05-03' });
   assert.equal(narrow.history.imageChanges, 3);

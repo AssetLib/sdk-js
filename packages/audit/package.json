@@ -1,6 +1,6 @@
 {
   "name": "@assetlib/audit",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Read-only local inventory of PNG, JPEG, and WebP assets in an existing app: measured bytes, exact duplicates, dimension candidates, literal-reference hints, and optional local git change history. No account, network, uploads, or source changes.",
   "license": "MIT",
   "type": "module",
