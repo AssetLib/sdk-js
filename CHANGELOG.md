@@ -1,10 +1,12 @@
 # Changelog
 
-## 0.7.0-preview.1 — unreleased
+## Unreleased (planned 0.7.0-preview.1)
+
+On `main`, not tagged or on npm. The package versions stay at 0.6.4-preview.1 until the release commit, which bumps them and dates this heading.
 
 - `@assetlib/sdk-core`: placement membership, contract revision of October 11, 2026. The latest accepted release alone decides whether a placement has published artwork. If it has no slot with the reference's key, `resolve` returns the bundled fallback (`source: 'bundle'`, `fallbackReason: 'missing'`, the reference's `bundledAccessibility` when present) and `resolveStateSet` returns the complete bundled family. Neither reads the cache, makes a request, calls `decide` or uses an older retained release. Before, a cached image from an older release kept showing until eight newer releases had arrived, so restoring a publication that predates a placement could not take back an image a device had already downloaded for it. When the current release publishes the key, resolution is unchanged: an incompatible slot (size, rendering or state set) or bytes that cannot be downloaded or verified still fall back to compatible cached bytes from older retained releases, which are never downloaded, then to the bundled fallback. Cached bytes are kept, so publishing the same image for the key again is a cache hit. No API, type or wire format change.
 - Apps that restore a publication that predates a placement now show that placement's bundled image on the first resolve after updating the SDK. An app whose current release already lacks a placement it once received may see that placement change from the old cached image to the bundled image when it updates the SDK.
-- `@assetlib/sdk-expo` changes only its version and README. Its components resolve through the core, so they follow the same rule; `AssetlibVideo`'s poster is the bundled image when the placement is removed.
+- `@assetlib/sdk-expo` changes only its version, which keeps its exact core dependency in step. Its components resolve through the core, so they follow the same rule; `AssetlibVideo`'s poster is the bundled image when the placement is removed.
 - Tests: the shared contract corpus adds 7 signed manifests (149 manifest cases) and `history.json` with 10 membership cases, including 4 controls that keep the history fallback for a key the current release still publishes. `test/history.test.mjs` covers state sets, animation posters, explicit arms and `decide`. Node unit tests only; no device, simulator, emulator or browser was run for this change.
 - `@assetlib/cli` 0.3.1 and `@assetlib/audit` 0.2.1 are unchanged by this change. `main` also carries an unreleased CLI change (the section `assetlib adopt` keeps in the app's `AGENTS.md`), so the release that ships this version must bump the CLI as well.
 
