@@ -53,6 +53,20 @@ async function waitForRegistry(name, version, sha1) {
   throw new Error(`${name}@${version} was published but npm did not serve it within 10 minutes.`);
 }
 
+// Exchanges this job's GitHub OIDC token for an npm publish token, as `npm publish` does, and discards it. Returns null
+// when npm accepts this workflow as the package's trusted publisher, otherwise the reason. `npm publish` itself only
+// reports ENEEDAUTH when the exchange fails.
+async function trustedPublisherProblem(name) {
+  const { ACTIONS_ID_TOKEN_REQUEST_URL: url, ACTIONS_ID_TOKEN_REQUEST_TOKEN: bearer } = process.env;
+  if (!url || !bearer) return 'this job has no GitHub OIDC token';
+  const id = await fetch(`${url}&audience=${encodeURIComponent('npm:registry.npmjs.org')}`, { headers: { Authorization: `Bearer ${bearer}` } });
+  if (!id.ok) return `GitHub refused an OIDC token (${id.status})`;
+  const { value } = await id.json();
+  const exchange = await fetch(`https://registry.npmjs.org/-/npm/v1/oidc/token/exchange/package/${name.replace('/', '%2f')}`, { method: 'POST', headers: { Authorization: `Bearer ${value}` } });
+  return exchange.ok ? null : `npm refused the token exchange (${exchange.status}): ${(await exchange.text()).slice(0, 300)}`;
+}
+const TRUSTED_PUBLISHER = 'organization AssetLib, repository sdk-js, workflow release.yml, environment npm';
+
 const tarballs = [];
 for (const file of (await readdir(directory)).filter(name => name.endsWith('.tgz'))) {
   const full = path.join(directory, file);
@@ -83,11 +97,16 @@ for (const item of tarballs) {
   // The audit is a stable package and gets `latest` only; every SDK and CLI version is a preview and gets both tags.
   const tags = item.name === '@assetlib/audit' ? ['latest'] : ['preview', 'latest'];
   if (dryRun) { console.log(`${item.name}@${item.version}: would publish ${item.file} with tags ${tags.join(', ')}.`); continue; }
+  const problem = await trustedPublisherProblem(item.name);
+  if (problem) throw new Error(`${item.name}: ${problem}. Check its trusted publisher on npmjs.com (${TRUSTED_PUBLISHER}).`);
   run('npm', ['publish', item.full, '--tag', tags[0], '--access', 'public']);
   await waitForRegistry(item.name, item.version, digest('sha1', await readFile(item.full)));
   for (const extra of tags.slice(1)) run('npm', ['dist-tag', 'add', `${item.name}@${item.version}`, extra]);
   console.log(`${item.name}@${item.version}: published with tags ${tags.join(', ')}.`);
 }
+
+// A dry run also checks every package's trusted publisher, so a wrong npmjs.com setting shows before a release.
+if (dryRun) for (const item of tarballs) console.log(`${item.name} trusted publisher: ${await trustedPublisherProblem(item.name) ?? 'accepted'}.`);
 
 const sums = [];
 for (const item of tarballs) sums.push(`${digest('sha256', await readFile(item.full))}  ${item.file}`);
