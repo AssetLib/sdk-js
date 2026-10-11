@@ -20,7 +20,7 @@ const transpile = async (name, replacements) => {
   await writeFile(path.join(temporary, name.replace(/\.tsx?$/, '.mjs')), (name === 'telemetry.ts' ? `const require = name => globalThis.__assetlibAdapter.optionalRequire(name);\n` : '') + compiled);
 };
 await writeFile(path.join(temporary, 'core.mjs'), `
-export const SDK_LIMITS = { assetBytes: 8 * 1024 * 1024 };
+export const SDK_LIMITS = { assetBytes: 8 * 1024 * 1024, videoBytes: 4 * 1024 * 1024 };
 import { createHash } from 'node:crypto';
 export const hashBytes = bytes => createHash('sha256').update(bytes).digest('hex');
 export const parsePublicConfig = value => value;
@@ -130,6 +130,32 @@ test('native disk rendering opens the appearance cache key and supports legacy c
   globalThis.__assetlibAdapter.files = [`${hash}.png`];
   assert.equal((await native.imageUri(config, resolved('a', 'disk'))).uri, `file:///mock/${hash}.png`);
   await assert.rejects(native.imageUri(config, { ...resolved('a', 'disk'), cacheKey: '../invalid' }), /Invalid cache key/);
+});
+
+test('native clips play only from a verified local file URI', async () => {
+  harness();
+  const clip = { source: 'cache', sequence: 3, message: 'verified', sha256: 'a'.repeat(64), assetId: 'a', mime: 'video/mp4', width: 320, height: 240, durationMs: 2000, frameRate: 30 };
+  const media = await native.videoUri(config, { ...clip, uri: 'file:///documents/assetlib-v1/scope/images/clip.mp4' });
+  assert.equal(media.uri, 'file:///documents/assetlib-v1/scope/images/clip.mp4');
+  media.release();
+  for (const result of [{ ...clip, bytes: new Uint8Array([1]) }, { ...clip, uri: 'https://assets.example/clip.mp4' }, { source: 'poster', sequence: null, message: 'none' }]) {
+    await assert.rejects(native.videoUri(config, result), /local file/);
+  }
+  assert.equal(globalThis.__assetlibAdapter.fileCalls, 0);
+});
+
+test('web clips become a video/mp4 Blob URL that release revokes', async () => {
+  const { resolveObjectURL } = await import('node:buffer');
+  const bytes = new Uint8Array([0, 0, 0, 8, 102, 116, 121, 112]);
+  const media = await web.videoUri(config, { source: 'remote', sequence: 3, message: 'verified', sha256: 'a'.repeat(64), assetId: 'a', mime: 'video/mp4', width: 320, height: 240, durationMs: 2000, frameRate: 30, bytes });
+  const blob = resolveObjectURL(media.uri);
+  assert.equal(blob.type, 'video/mp4');
+  assert.deepEqual(new Uint8Array(await blob.arrayBuffer()), bytes);
+  media.release();
+  assert.equal(resolveObjectURL(media.uri), undefined);
+  for (const result of [{ source: 'poster', sequence: null, message: 'none' }, { source: 'cache', sequence: 3, uri: 'file:///clip.mp4' }, { source: 'cache', sequence: 3, bytes: new Uint8Array(4 * 1024 * 1024 + 1) }]) {
+    await assert.rejects(web.videoUri(config, result), /Missing verified clip bytes/);
+  }
 });
 
 test('data URI encoding handles padding and chunk boundaries and rejects unsupported payloads', () => {

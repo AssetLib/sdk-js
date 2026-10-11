@@ -184,13 +184,42 @@ For example, `createExpoAssetClient(config, { cachePolicy: 'memory' })` keeps ar
 
 Native uses the maintained Expo `File`, `Directory`, and `Paths` APIs for durable verification metadata and optional disk artwork, with private app-document storage and a recoverable state replacement journal. Native delivery uses streaming `expo/fetch`. Web uses transactional IndexedDB for durable metadata and optional cached artwork, browser Fetch, and ephemeral Blob image URLs, released when the component changes or unmounts. No credentials are attached to public delivery requests; the server must allow the web demo origin through CORS.
 
-Caches and durable replay state are isolated by manifest origin, organization, app, and environment. Changing pins or switching between the legacy and environment-scoped production manifest routes preserves that namespace. On first use, an empty namespace checks both previous URL/key formulas (single-key and sorted-key-set), verifies the complete stored history with the current pins, and moves valid state and bounded cached artwork into the new namespace. Invalid legacy state is left untouched. A persisted completion marker prevents re-migration; missing or corrupt current state fails closed. Persistent artwork storage, including cached Lottie JSON, is bounded to 50 MiB / 100 entries per namespace; the core retains eight signed releases. Cached content is rehashed. When verified artwork cannot be fetched or found in an eligible cache, the component uses its bundled fallback.
+Caches and durable replay state are isolated by manifest origin, organization, app, and environment. Changing pins or switching between the legacy and environment-scoped production manifest routes preserves that namespace. On first use, an empty namespace checks both previous URL/key formulas (single-key and sorted-key-set), verifies the complete stored history with the current pins, and moves valid state and bounded cached artwork into the new namespace. Invalid legacy state is left untouched. A persisted completion marker prevents re-migration; missing or corrupt current state fails closed. Persistent artwork storage, including cached Lottie JSON and MP4 clips, is bounded to 50 MiB / 100 entries per namespace; the core retains eight signed releases. Cached content is rehashed. When verified artwork cannot be fetched or found in an eligible cache, the component uses its bundled fallback.
 
 For the first upgrade from the old namespace scheme, retain the previous pinned set until migration has completed. Migration recognizes subsets of the current pins, including an expansion during upgrade, but cannot reconstruct an old sorted-set namespace containing a removed, unused pin from its one-way hash. Searches are limited to 4,096 namespace probes; exceeding this limit fails closed with bundled artwork instead of resetting replay protection. After migration, pin changes do not change storage identity; every retained release must still verify with the current pins.
 
 There is no automatic app-data reset API: disconnect the client to show bundled artwork while retaining the cache. Explicitly clearing app/browser data removes stored replay protection. Multiple native clients are serialized within one JavaScript process; cross-process synchronization is outside this preview's contract. Preview 0.2 supports PNG/WebP renditions selected by explicit pixel size. Logical placement dimensions still match the generated catalog. Native caches preserve compatibility with existing `.webp` entries. Web can opt into normalized SVG with `createExpoAssetClient(config, { allowVector: true })`; enabling that option on native throws. On native, `client.resolveAnimation(ref)` resolves verified Lottie JSON and, under the `disk` policy, caches it as `<sha256>.json` beside the cached images (at most 512 KiB per entry, inside the same budget) for a Lottie player that the app supplies. The SDK includes no player, and its image components show the still poster. Native SVG and PDF delivery are not implemented. Browser rendering checks decoded dimensions before handing the image to Expo; native Expo decode errors fall back to the bundled image. See the core README for signature, timeout, body-size, and compatibility limits.
 
-## Optional runtime observations
+## Short looping video
+
+`AssetlibVideo` shows a placement's poster and plays its signed short looping MP4 clip over it. It ships from a separate entry point so `expo-video` stays an optional peer dependency; importing `@assetlib/sdk-expo` never loads it. **This has not been verified on a device, simulator, emulator or browser**; it is covered by Node unit tests with a simulated player only.
+
+```sh
+npx expo install expo-video
+```
+
+```tsx
+import { AssetlibVideo } from '@assetlib/sdk-expo/video';
+
+<AssetlibVideo
+  client={client}
+  asset={AppAssets.Cards.gold}
+  fallback={require('./assets/gold.png')}
+  revision={refreshCounter}
+  contentFit="cover"
+  style={{ width: '100%', aspectRatio: 4 / 3 }}
+/>
+```
+
+- **Poster first.** It takes `AssetlibImage`'s props and renders that image as the poster, bundled fallback first. `style` sizes the container; the poster and clip fill it. The poster stays visible until the clip's first frame renders and returns on any failure.
+- **Playback.** `expo-video`'s `useVideoPlayer` with `loop` and `muted` (screen not kept awake), in a `VideoView` with `nativeControls={false}` and the poster's `contentFit` (`none` and `scale-down` become `contain`).
+- **When it plays.** Only while `AccessibilityInfo.isReduceMotionEnabled()` reports `false` (it listens to `reduceMotionChanged`; an unknown or failing query counts as reduced), the app is active (`AppState`; `background` and `inactive` stop it), `paused` is not set, and the view holds one of two playback slots shared by every `AssetlibVideo` in the app. Other views show their poster and take a slot when one frees. A view resolves its clip only once it holds a slot. Off-screen detection is up to the app: pass `paused` for views that are not visible.
+- **Failures.** A missing clip, a failed check, a player error, or a rejected web `play()` (autoplay blocked, for example in iOS Low Power Mode) shows the poster until the request changes (client, asset, `revision` or `cachePolicy`).
+- **iOS and Android.** The native adapter caches verified clips as `<sha256>.mp4` in the namespaced cache directory (at most 4 MiB each, inside the 50 MiB / 100 entry budget) and the core returns the file's `file://` URI. Under the `memory` and `none` policies `resolveVideo` returns the poster without downloading, because the player needs a file.
+- **Web.** Verified bytes from IndexedDB, memory or the network become a `video/mp4` Blob URL, revoked when the clip changes or the component unmounts.
+- **Open risk.** `expo-video` documents `require()` assets and media-library URIs as local sources, not plain `file://` URIs. Its 57.0.5 source passes a string URI through unchanged: iOS builds an `AVURLAsset` from it (only `ph://` is special-cased) and Android hands it to Media3's `DefaultDataSource`, which reads `file://` URIs. Whether a cached file plays on devices is unverified.
+- Limits and the signed descriptor are in the core README's [Short looping video](../sdk-core/README.md#short-looping-video) section. `createExpoAssetClient(config, { videoTimeoutMs })` sets the clip deadline.
+
 
 Telemetry is **off by default**. Enable it explicitly to report which published placement artwork the app resolves and attaches to an image renderer:
 
@@ -222,4 +251,4 @@ Enabling telemetry changes the app's data collection behavior. Review Google Pla
 
 ## Validation
 
-`npm test` exercises component lifecycle behavior with a React test renderer and mocked platform boundaries, including state-family activation, pinned selection, cancellation, fallback, and native no-file data URI generation. `npm run typecheck` checks against the current Expo 57 APIs. Core security and offline tests run in the sibling package. Actual iOS/Android runtime and web delivery checks must be reported separately; these tests and typechecking are not evidence of a native device run.
+`npm test` exercises component lifecycle behavior with a React test renderer and mocked platform boundaries, including state-family activation, pinned selection, cancellation, fallback, native no-file data URI generation, and `AssetlibVideo`'s reduced-motion, app-state, two-slot and failure handling against a simulated player. `npm run typecheck` checks against the current Expo 57 APIs. Core security and offline tests run in the sibling package. Actual iOS/Android runtime and web delivery checks must be reported separately; these tests and typechecking are not evidence of a native device run.

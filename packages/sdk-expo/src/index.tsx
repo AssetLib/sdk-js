@@ -6,9 +6,9 @@ import { createPlatformStorage, imageUri, platformFetch, vectorRenderingSupporte
 import type { ImageUri } from './shared';
 import { expoTelemetry, flushOnBackground } from './telemetry';
 export { resolveAccessibilityDescription } from '@assetlib/sdk-core';
-export type { AssetAccessibility, AssetClient, AssetlibConfig, AssetRef, AssetRendering, AssetStatus, CachePolicy, ClientStatus, DynamicAssetRef, RefreshResult, StateSetRef, TelemetryOptions } from '@assetlib/sdk-core';
+export type { AssetAccessibility, AssetClient, AssetlibConfig, AssetRef, AssetRendering, AssetStatus, CachePolicy, ClientStatus, DynamicAssetRef, RefreshResult, ResolvedVideo, StateSetRef, TelemetryOptions } from '@assetlib/sdk-core';
 
-export function createExpoAssetClient(config: AssetlibConfig, options: { allowInsecureLoopback?: boolean; timeoutMs?: number; decisionTimeoutMs?: number; allowVector?: boolean; cachePolicy?: CachePolicy; decide?: ClientOptions['decide']; telemetry?: ClientOptions['telemetry'] } = {}): AssetClient {
+export function createExpoAssetClient(config: AssetlibConfig, options: { allowInsecureLoopback?: boolean; timeoutMs?: number; videoTimeoutMs?: number; decisionTimeoutMs?: number; allowVector?: boolean; cachePolicy?: CachePolicy; decide?: ClientOptions['decide']; telemetry?: ClientOptions['telemetry'] } = {}): AssetClient {
   const validated = parsePublicConfig(config, options);
   if (options.allowVector && !vectorRenderingSupported) throw new Error('SVG delivery is supported only by the browser adapter.');
   const telemetry = expoTelemetry(options.telemetry);

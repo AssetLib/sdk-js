@@ -7,7 +7,8 @@
   "types": "./src/index.tsx",
   "react-native": "./src/index.tsx",
   "exports": {
-    ".": "./src/index.tsx"
+    ".": "./src/index.tsx",
+    "./video": "./src/video.tsx"
   },
   "files": [
     "src",
@@ -25,8 +26,14 @@
     "expo": ">=57 <58",
     "expo-file-system": ">=57 <58",
     "expo-image": ">=57 <58",
+    "expo-video": ">=57 <58",
     "react": ">=19 <20",
     "react-native": ">=0.86 <0.87"
+  },
+  "peerDependenciesMeta": {
+    "expo-video": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@types/react": "^19.2.0",

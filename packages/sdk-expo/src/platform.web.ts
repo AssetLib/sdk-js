@@ -1,4 +1,4 @@
-import { SDK_LIMITS, verifyStoredState, type AssetlibConfig, type AssetStorage, type ResolvedAsset } from '@assetlib/sdk-core';
+import { SDK_LIMITS, verifyStoredState, type AssetlibConfig, type AssetStorage, type ResolvedAsset, type ResolvedVideo } from '@assetlib/sdk-core';
 import { namespace, legacyNamespaces, installStorageKey, validateCacheKey, type ImageUri } from './shared';
 export const vectorRenderingSupported = true;
 export const platformFetch: typeof globalThis.fetch = (...args) => globalThis.fetch(...args);
@@ -160,4 +160,10 @@ export async function imageUri(_config: AssetlibConfig, result: ResolvedAsset): 
     });
     return { uri, release: () => URL.revokeObjectURL(uri) };
   } catch (error) { URL.revokeObjectURL(uri); throw error; }
+}
+/** Verified clip bytes from IndexedDB, memory or the network as a Blob URL; the component releases it on unmount. */
+export async function videoUri(_config: AssetlibConfig, result: ResolvedVideo): Promise<ImageUri> {
+  if (result.source === 'poster' || !result.bytes?.length || result.bytes.length > SDK_LIMITS.videoBytes) throw new Error('Missing verified clip bytes.');
+  const uri = URL.createObjectURL(new Blob([result.bytes.slice().buffer as ArrayBuffer], { type: 'video/mp4' }));
+  return { uri, release: () => URL.revokeObjectURL(uri) };
 }

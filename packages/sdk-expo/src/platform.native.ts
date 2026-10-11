@@ -1,15 +1,16 @@
 import { Directory, File, Paths } from 'expo-file-system';
 import { fetch as expoFetch } from 'expo/fetch';
-import { LOTTIE_LIMITS, SDK_LIMITS, verifyStoredState, type AssetlibConfig, type AssetStorage, type ResolvedAsset } from '@assetlib/sdk-core';
+import { LOTTIE_LIMITS, SDK_LIMITS, verifyStoredState, type AssetlibConfig, type AssetStorage, type ResolvedAsset, type ResolvedVideo } from '@assetlib/sdk-core';
 import { namespace, legacyNamespaces, installStorageKey, rasterDataUri, validateCacheKey, type ImageUri } from './shared';
 
 export const vectorRenderingSupported = false;
 export const platformFetch = expoFetch as unknown as typeof globalThis.fetch;
-// Raster images and verified Lottie JSON share one namespaced directory and its budget.
-const cacheFormats = new Map<string, { extension: string; maxBytes: number }>([
-  ['image/webp', { extension: 'webp', maxBytes: SDK_LIMITS.assetBytes }],
-  ['image/png', { extension: 'png', maxBytes: SDK_LIMITS.assetBytes }],
-  ['application/json', { extension: 'json', maxBytes: LOTTIE_LIMITS.bytes }],
+// Raster images, verified Lottie JSON and MP4 clips share one namespaced directory and its budget.
+const cacheFormats = new Map<string, { extension: string; maxBytes: number; label: string }>([
+  ['image/webp', { extension: 'webp', maxBytes: SDK_LIMITS.assetBytes, label: 'Image' }],
+  ['image/png', { extension: 'png', maxBytes: SDK_LIMITS.assetBytes, label: 'Image' }],
+  ['application/json', { extension: 'json', maxBytes: LOTTIE_LIMITS.bytes, label: 'Animation' }],
+  ['video/mp4', { extension: 'mp4', maxBytes: SDK_LIMITS.videoBytes, label: 'Clip' }],
 ]);
 const locks = new Map<string, Promise<unknown>>();
 function exclusive<T>(key: string, fn: () => Promise<T>): Promise<T> {
@@ -135,13 +136,13 @@ export function createPlatformStorage(config: AssetlibConfig): AssetStorage {
     },
     putAsset: (hash, bytes, mime = 'image/webp') => exclusive(scope, async () => {
       const format = cacheFormats.get(mime);
-      if (!format) throw new Error('This native adapter caches PNG, WebP and Lottie JSON only.');
+      if (!format) throw new Error('This native adapter caches PNG, WebP, Lottie JSON and MP4 only.');
       const { extension } = format;
       validateCacheKey(hash);
-      if (bytes.length > format.maxBytes) throw new Error(`${mime === 'application/json' ? 'Animation' : 'Image'} exceeds the cache entry bound.`);
+      if (bytes.length > format.maxBytes) throw new Error(`${format.label} exceeds the cache entry bound.`);
       const { images } = directories(config);
       for (const entry of images.list()) if (entry instanceof File && entry.name.endsWith('.next')) entry.delete();
-      const entries = images.list().filter((entry): entry is File => entry instanceof File && /\.(webp|png|json)$/.test(entry.name) && entry.name !== `${hash}.${extension}`).sort((a, b) => (a.modificationTime ?? 0) - (b.modificationTime ?? 0));
+      const entries = images.list().filter((entry): entry is File => entry instanceof File && /\.(webp|png|json|mp4)$/.test(entry.name) && entry.name !== `${hash}.${extension}`).sort((a, b) => (a.modificationTime ?? 0) - (b.modificationTime ?? 0));
       let total = entries.reduce((sum, file) => sum + file.size, 0);
       while (entries.length >= SDK_LIMITS.cacheEntries || total + bytes.length > SDK_LIMITS.cacheBytes) {
         const oldest = entries.shift();
@@ -153,6 +154,14 @@ export function createPlatformStorage(config: AssetlibConfig): AssetStorage {
       next.create({ overwrite: true }); next.write(bytes);
       await next.move(new File(images, `${hash}.${extension}`), { overwrite: true });
     }),
+    // The player opens clips from files, so the core returns this URI instead of clip bytes.
+    getAssetFileUri: async (hash, mime) => {
+      validateCacheKey(hash);
+      const format = cacheFormats.get(mime);
+      if (!format) return null;
+      const file = new File(directories(config).images, `${hash}.${format.extension}`);
+      return file.exists && file.size <= format.maxBytes ? file.uri : null;
+    },
   };
 }
 export async function imageUri(config: AssetlibConfig, result: ResolvedAsset): Promise<ImageUri> {
@@ -166,4 +175,9 @@ export async function imageUri(config: AssetlibConfig, result: ResolvedAsset): P
   const file = new File(directories(config).images, `${cacheKey}.${extension}`);
   if (!file.exists) throw new Error('The verified image was evicted from the local cache.');
   return { uri: file.uri, release() {} };
+}
+/** A verified cached clip as the player's local file. `memory` and `none` never reach here: the core gives the poster. */
+export async function videoUri(_config: AssetlibConfig, result: ResolvedVideo): Promise<ImageUri> {
+  if (result.source === 'poster' || typeof result.uri !== 'string' || !result.uri.startsWith('file://')) throw new Error('The verified clip is not available as a local file.');
+  return { uri: result.uri, release() {} };
 }

@@ -397,7 +397,7 @@ test('native: the adapter stores and reads back Lottie JSON, rejects other forma
   assert.deepEqual(globalThis.__assetlibStorage.files.get(`${dir}${lottieHash}.json`), lottieBytes);
   assert.deepEqual(await storage.getAsset(lottieHash), lottieBytes);
   for (const mime of ['image/svg+xml', 'application/pdf', 'text/plain', 'constructor']) {
-    await assert.rejects(storage.putAsset('c'.repeat(64), bytes, mime), /caches PNG, WebP and Lottie JSON only/, mime);
+    await assert.rejects(storage.putAsset('c'.repeat(64), bytes, mime), /caches PNG, WebP, Lottie JSON and MP4 only/, mime);
   }
   await assert.rejects(storage.putAsset('../escape', lottieBytes, 'application/json'), /Invalid cache key/);
   await assert.rejects(storage.putAsset('d'.repeat(64), new Uint8Array(LOTTIE_LIMITS.bytes + 1), 'application/json'), /Animation exceeds the cache entry bound/);
@@ -430,4 +430,98 @@ test('native: Lottie JSON counts toward the shared entry and byte eviction budge
   await storage.putAsset('a'.repeat(64), animation, 'application/json');
   assert.ok(total() <= SDK_LIMITS.cacheBytes && cacheFiles(config).length <= SDK_LIMITS.cacheEntries);
   assert.equal(globalThis.__assetlibStorage.files.has(`${dir}${'a'.repeat(64)}.json`), true);
+});
+
+// Short looping clips: the native adapter stores verified MP4 as <sha256>.mp4 and hands the
+// player its file URI; web keeps the bytes in IndexedDB for a Blob URL.
+const loop = new Uint8Array(await readFile(new URL('../../sdk-core/test/fixtures/shared/assets/loop.mp4', import.meta.url))), loopHash = hashBytes(loop);
+const clipRef = { key: 'cards.loop', width: 400, height: 300 }, clipUrl = `${posterUrl}/videos/${loopHash}`;
+const videoEnvelope = () => {
+  const payload = JSON.stringify({ schemaVersion: 1, videoSchemaVersion: 1, orgId, appId, environment: 'production', sequence: 1, createdAt: '2026-10-10T12:00:00.000Z', slots: [{ ...clipRef, screen: 'Cards', assetId, sha256: hashBytes(bytes), url: posterUrl, mime: 'image/webp', bytes: bytes.length,
+    video: { format: 'mp4', profile: 'h264-loop-v1', mime: 'video/mp4', sha256: loopHash, url: clipUrl, bytes: loop.length, width: 320, height: 240, durationMs: 2000, frameRate: 30 } }] });
+  return { algorithm: 'Ed25519', publicKey: keys[0].publicKey, keyId: keys[0].keyId, payload, signature: sign(null, Buffer.from(payload), keys[0].privateKey).toString('base64') };
+};
+const videoService = () => {
+  const state = { offline: false, requests: [] };
+  return { state, fetch: async url => {
+    const pathname = new URL(url).pathname;
+    state.requests.push(pathname);
+    if (state.offline) throw new Error('offline');
+    if (pathname.endsWith('/manifest')) return new Response(JSON.stringify(videoEnvelope()));
+    return new Response(pathname === clipUrl ? loop : bytes);
+  } };
+};
+
+test('native: a verified clip is cached as <sha256>.mp4 and returned as its file URI, also offline after a restart', async () => {
+  const h = harness('native'), config = configFor(), remote = videoService(), file = `${imagesDirectory(config)}${loopHash}.mp4`;
+  const first = new AssetClient(config, { storage: h.storage(config), fetch: remote.fetch });
+  await first.refresh();
+  const downloaded = await first.resolveVideo(clipRef);
+  assert.equal(downloaded.source, 'remote', downloaded.message);
+  assert.equal(downloaded.uri, file); assert.equal(downloaded.bytes, undefined);
+  assert.deepEqual(cacheFiles(config).map(([name]) => name), [file]);
+  assert.deepEqual(globalThis.__assetlibStorage.files.get(file), loop);
+  remote.state.offline = true; remote.state.requests = [];
+  const restarted = new AssetClient(config, { storage: h.storage(config), fetch: remote.fetch });
+  const cached = await restarted.resolveVideo(clipRef);
+  assert.equal(cached.source, 'cache', cached.message); assert.equal(cached.uri, file); assert.equal(cached.sequence, 1);
+  assert.equal(remote.state.requests.length, 0);
+  // Same length, different bytes: the core rehashes the file before handing out its URI.
+  const tampered = loop.slice(); tampered[tampered.length - 1] ^= 1;
+  globalThis.__assetlibStorage.files.set(file, tampered);
+  const rejected = await new AssetClient(config, { storage: h.storage(config), fetch: remote.fetch }).resolveVideo(clipRef);
+  assert.equal(rejected.source, 'poster'); assert.equal(rejected.uri, undefined);
+});
+
+test('native: memory and none policies give the poster without downloading, because the player needs a file', async () => {
+  for (const cachePolicy of ['memory', 'none']) {
+    const h = harness('native'), config = configFor(), remote = videoService();
+    const client = new AssetClient(config, { storage: h.storage(config), fetch: remote.fetch, cachePolicy });
+    await client.refresh(); remote.state.requests = [];
+    const result = await client.resolveVideo(clipRef);
+    assert.equal(result.source, 'poster', cachePolicy); assert.match(result.message, /disk cache policy/);
+    assert.deepEqual(remote.state.requests, []);
+    assert.deepEqual(cacheFiles(config), []);
+  }
+});
+
+test('native: the adapter bounds MP4 entries at 4 MiB and shares the eviction budget', async () => {
+  const h = harness('native'), config = configFor(), storage = h.storage(config), dir = imagesDirectory(config);
+  await storage.putAsset(loopHash, loop, 'video/mp4');
+  assert.deepEqual(await storage.getAsset(loopHash), loop);
+  assert.equal(await storage.getAssetFileUri(loopHash, 'video/mp4'), `${dir}${loopHash}.mp4`);
+  assert.equal(await storage.getAssetFileUri(loopHash, 'image/webp'), null, 'a URI is given only for the stored format');
+  assert.equal(await storage.getAssetFileUri('c'.repeat(64), 'video/mp4'), null);
+  assert.equal(await storage.getAssetFileUri('c'.repeat(64), 'text/plain'), null);
+  await assert.rejects(storage.getAssetFileUri('../escape', 'video/mp4'), /Invalid cache key/);
+  await storage.putAsset('d'.repeat(64), new Uint8Array(SDK_LIMITS.videoBytes), 'video/mp4');
+  await assert.rejects(storage.putAsset('e'.repeat(64), new Uint8Array(SDK_LIMITS.videoBytes + 1), 'video/mp4'), /Clip exceeds the cache entry bound/);
+  globalThis.__assetlibStorage.files.set(`${dir}${'f'.repeat(64)}.mp4`, new Uint8Array(SDK_LIMITS.videoBytes + 1));
+  assert.equal(await storage.getAsset('f'.repeat(64)), null, 'an oversized clip file is never read back');
+  assert.equal(await storage.getAssetFileUri('f'.repeat(64), 'video/mp4'), null);
+  globalThis.__assetlibStorage.files.delete(`${dir}${'f'.repeat(64)}.mp4`);
+  const key = index => hashBytes(new TextEncoder().encode(`clip-entry-${index}`));
+  for (let index = 0; index < SDK_LIMITS.cacheEntries; index++) await storage.putAsset(key(index), bytes, 'image/webp');
+  assert.equal(cacheFiles(config).length, SDK_LIMITS.cacheEntries);
+  assert.equal(globalThis.__assetlibStorage.files.has(`${dir}${loopHash}.mp4`), false, 'the oldest entry, a clip, was evicted by count');
+  for (const [name] of cacheFiles(config)) globalThis.__assetlibStorage.files.delete(name);
+  const large = new Uint8Array(SDK_LIMITS.assetBytes), clip = new Uint8Array(SDK_LIMITS.videoBytes);
+  await storage.putAsset('a'.repeat(64), clip, 'video/mp4');
+  const fits = Math.floor((SDK_LIMITS.cacheBytes - clip.length) / large.length);
+  for (let index = 0; index < fits; index++) await storage.putAsset(key(index), large, 'image/webp');
+  assert.equal(globalThis.__assetlibStorage.files.has(`${dir}${'a'.repeat(64)}.mp4`), true);
+  await storage.putAsset(key(fits), large, 'image/png');
+  assert.equal(globalThis.__assetlibStorage.files.has(`${dir}${'a'.repeat(64)}.mp4`), false, 'the oldest entry, a clip, was evicted by bytes');
+  assert.ok(cacheFiles(config).reduce((sum, [, value]) => sum + value.length, 0) <= SDK_LIMITS.cacheBytes);
+});
+
+test('web: a verified clip is kept in IndexedDB and returned as bytes, also offline after a restart', async () => {
+  const h = harness('web'), config = configFor(), remote = videoService();
+  const first = new AssetClient(config, { storage: h.storage(config), fetch: remote.fetch });
+  await first.refresh();
+  const downloaded = await first.resolveVideo(clipRef);
+  assert.equal(downloaded.source, 'remote', downloaded.message); assert.deepEqual(downloaded.bytes, loop); assert.equal(downloaded.uri, undefined);
+  remote.state.offline = true;
+  const cached = await new AssetClient(config, { storage: h.storage(config), fetch: remote.fetch }).resolveVideo(clipRef);
+  assert.equal(cached.source, 'cache', cached.message); assert.deepEqual(cached.bytes, loop);
 });
