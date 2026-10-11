@@ -6,6 +6,10 @@ import { AssetlibImage, type AssetlibImageProps } from './index';
 import { videoUri } from './platform';
 import type { ImageUri } from './shared';
 
+// On web, expo-video puts the style on the <video> element, which keeps its intrinsic size under
+// absolute positioning alone; an explicit size makes the clip fill the placement like the poster.
+const videoFill = { width: '100%', height: '100%' } as const;
+
 export type AssetlibVideoProps<R extends AssetRef = AssetRef> = AssetlibImageProps<R> & {
   /** Show the poster instead of playing, for example while the view is off screen. */
   paused?: boolean;
@@ -68,7 +72,7 @@ function LoopingClip({ uri, contentFit, onFirstFrame, onFailure }: { uri: string
     } catch { fail(); }
     return () => { mounted = false; subscription.remove(); };
   }, [player]);
-  return <VideoView ref={view} player={player} nativeControls={false} contentFit={contentFit} allowsPictureInPicture={false} playsInline style={StyleSheet.absoluteFill} onFirstFrameRender={() => callbacks.current.onFirstFrame()} />;
+  return <VideoView ref={view} player={player} nativeControls={false} contentFit={contentFit} allowsPictureInPicture={false} playsInline style={[StyleSheet.absoluteFill, videoFill]} onFirstFrameRender={() => callbacks.current.onFirstFrame()} />;
 }
 
 /**

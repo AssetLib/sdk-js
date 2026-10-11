@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.2-preview.1 — October 11, 2026
+
+- `@assetlib/sdk-expo`: on web, `AssetlibVideo` drew the clip at its intrinsic size, so a 1280×720 clip showed only its top-left corner inside a smaller placement. expo-video's web player puts the component's style on the `<video>` element, and absolute positioning alone does not size a video element. The clip now also gets an explicit 100% width and height, so it fills the placement the way the poster does. iOS and Android were unaffected. Found by an end-to-end browser check of an Expo web export in Chrome on October 11, 2026; the Expo native builds on an iOS 27 Simulator and an Android 16 emulator played the cached clip correctly in the same run.
+- `@assetlib/sdk-core` changes only its version, which keeps the Expo package's exact dependency in step. `@assetlib/cli` 0.3.1 and `@assetlib/audit` 0.2.0 are unchanged.
+
 ## 0.6.1-preview.1 — October 11, 2026
 
 - `@assetlib/sdk-core` and `@assetlib/sdk-expo` change only their version. `@assetlib/cli` 0.3.1 and `@assetlib/audit` 0.2.0 are unchanged.

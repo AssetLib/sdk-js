@@ -93,6 +93,8 @@ test('reduced motion shows the poster without resolving; allowed motion plays a 
   assert.deepEqual(env.resolves.map(item => [item.key, item.options.cachePolicy, item.options.signal instanceof AbortSignal]), [['a', 'disk', true]]);
   const [clip] = videos(renderer);
   assert.equal(clip.props.nativeControls, false); assert.equal(clip.props.contentFit, 'contain'); assert.equal(clip.props.allowsPictureInPicture, false);
+  // On web expo-video styles the <video> element, which keeps its intrinsic size under absolute positioning alone.
+  assert.deepEqual(clip.props.style, [{ position: 'absolute' }, { width: '100%', height: '100%' }], 'the clip fills the placement like the poster');
   const player = env.players[0];
   assert.deepEqual({ source: player.source, loop: player.loop, muted: player.muted, keepScreenOn: player.keepScreenOnWhilePlaying, plays: player.plays }, { source: 'file:///clips/a.mp4', loop: true, muted: true, keepScreenOn: false, plays: 1 });
   assert.equal(posterOpacity(renderer), 1, 'the poster stays until the first frame renders');
