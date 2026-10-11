@@ -49,19 +49,19 @@ test('init is a dry run by default and plans the catalog, client, config and wor
   assert.equal(report.mode, 'dry-run');
   assert.deepEqual(report.adoption.candidates.map(item => item.key), ['home.coast-hero', 'home.ridge']);
   assert.deepEqual(report.adoption.skipped.map(item => item.reason), ['essential']);
-  assert.deepEqual(report.files.map(file => file.path).sort(), ['.github/workflows/assetlib-sync.yml', 'assetlib.catalog.json', 'assetlib.public.json', 'src/Home.tsx', 'src/assetlib/client.ts', 'src/assets.generated.ts']);
+  assert.deepEqual(report.files.map(file => file.path).sort(), ['.github/workflows/assetlib-sync.yml', 'AGENTS.md', 'assetlib.catalog.json', 'assetlib.public.json', 'src/Home.tsx', 'src/assetlib/client.ts', 'src/assets.generated.ts']);
   assert.equal(report.files.find(file => file.path === 'assetlib.catalog.json').created, true);
   assert.equal(report.next.length, 4);
   assert.deepEqual(await p.files(), original, 'a dry run writes nothing');
   const text = await p.run(['--config', p.configFile], false);
-  assert.match(text.stdout, /2 placements; 2 call sites; 6 files would be written\./);
+  assert.match(text.stdout, /2 placements; 2 call sites; 7 files would be written\./);
   assert.match(text.stdout, /Rerun with --apply/);
 });
 
 test('init --apply writes the plan once and then refuses to run again', async t => {
   const p = await project(t);
   assert.equal((await p.run(['--config', p.configFile, '--apply'])).code, 0);
-  assert.deepEqual(await p.files(), ['.github/workflows/assetlib-sync.yml', 'app.json', 'assetlib.catalog.json', 'assetlib.public.json', 'package.json', 'src/Home.tsx', 'src/assetlib/client.ts', 'src/assets.generated.ts']);
+  assert.deepEqual(await p.files(), ['.github/workflows/assetlib-sync.yml', 'AGENTS.md', 'app.json', 'assetlib.catalog.json', 'assetlib.public.json', 'package.json', 'src/Home.tsx', 'src/assetlib/client.ts', 'src/assets.generated.ts']);
   const catalog = JSON.parse(await p.get('assetlib.catalog.json'));
   assert.deepEqual(catalog.placements.map(item => [item.key, item.width, item.height]), [['home.coast-hero', 1200, 900], ['home.ridge', 800, 600]]);
   assert.equal(await p.get('assetlib.public.json'), await readFile(p.configFile, 'utf8'), 'the public config is copied byte for byte');

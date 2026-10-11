@@ -5,6 +5,7 @@ import ts from 'typescript';
 import { imageSize } from 'image-size';
 import { generateCatalog } from './codegen.mjs';
 import { formatCatalog } from './catalog.mjs';
+import { agentSection, importsAgents, withAgentSection } from './agents.mjs';
 
 // Match the local audit's conservative source and image budgets.
 const LIMITS = { entries: 20000, files: 500, fileBytes: 256 * 1024, totalBytes: 2 * 1024 * 1024, depth: 32, imageBytes: 32 * 1024 * 1024, totalImageBytes: 128 * 1024 * 1024 };
@@ -53,6 +54,17 @@ export async function safeDestination(root, file) {
       ancestor = path.dirname(ancestor);
     }
   }
+}
+
+// AGENTS.md or CLAUDE.md as it stands: missing, a regular file within the source limit, a symlink, or neither.
+async function readInstructions(root, file) {
+  let stat;
+  try { stat = await lstat(file); }
+  catch (error) { if (error.code === 'ENOENT') return { kind: 'missing' }; throw error; }
+  if (stat.isSymbolicLink()) { try { return { kind: 'link', target: await realpath(file) }; } catch { return { kind: 'link', target: null }; } }
+  if (!stat.isFile()) return { kind: 'unreadable' };
+  try { return { kind: 'file', text: (await readBounded(root, file, LIMITS.fileBytes)).toString('utf8') }; }
+  catch { return { kind: 'unreadable' }; }
 }
 
 async function sourceFiles(root, selected, generated, report) {
@@ -372,6 +384,20 @@ export async function adopt({ catalogPath, catalog, src, generated: generatedOpt
       const configModule = relativeImport(clientFile, path.join(root, 'assetlib.public.json'));
       await plan(clientFile, `// Review this starter client before running the app.\n// Download the app's public SDK config to assetlib.public.json; never put API tokens here.\nimport { createExpoAssetClient } from '@assetlib/sdk-expo';\nimport { parsePublicConfig } from '@assetlib/sdk-core';\n\nconst config = parsePublicConfig(require(${quote(configModule)}));\n${clientExport === 'default' ? 'export default' : 'export const ' + clientExport + ' ='} createExpoAssetClient(config);\n`);
       report.notes.push(`${apply ? 'Created' : 'Would create'} client stub: ${slash(path.relative(root, clientFile))}. Review the public config before running the app.`);
+    }
+    // Coding agents read AGENTS.md (Claude Code reads CLAUDE.md), so they learn to use placements instead of exporting art.
+    const section = agentSection({ catalogFile: slash(path.relative(root, catalogPath)), generatedFile: slash(path.relative(root, generated)), example: nextCatalog.placements[0] });
+    const agentsFile = path.join(root, 'AGENTS.md'), claudeFile = path.join(root, 'CLAUDE.md');
+    const instructions = [[agentsFile, await readInstructions(root, agentsFile)], [claudeFile, await readInstructions(root, claudeFile)]];
+    for (const [file, state] of instructions) {
+      const name = path.basename(file), sibling = file === agentsFile ? claudeFile : agentsFile;
+      if (state.kind === 'missing') { if (file === agentsFile) await plan(file, section); continue; }
+      if (state.kind === 'link') { if (state.target !== sibling) report.notes.push(`${name} is a symlink, so adopt left it unchanged. Add the Assetlib section from the CLI README yourself.`); continue; }
+      if (state.kind === 'unreadable') { report.notes.push(`${name} could not be read within the source limit, so adopt left it unchanged. Add the Assetlib section from the CLI README yourself.`); continue; }
+      if (file === claudeFile && importsAgents(state.text)) continue;
+      const after = withAgentSection(state.text, section);
+      if (after === null) report.notes.push(`${name} has an unmatched or repeated Assetlib section marker, so adopt left it unchanged.`);
+      else await plan(file, after);
     }
   }
   if (only) for (const [image, requested] of only) if (!report.candidates.some(item => path.resolve(root, item.image) === image)) report.notes.push(`No adoptable call site uses --image ${requested}.`);

@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import { main } from '../src/cli.mjs';
 import { generateCatalog } from '../src/codegen.mjs';
+import { AGENTS_END, AGENTS_START, agentSection, withAgentSection } from '../src/agents.mjs';
 
 const execute = promisify(execFile);
 const bin = fileURLToPath(new URL('../bin/assetlib.mjs', import.meta.url));
@@ -135,7 +136,7 @@ test('dry run plans both supported patterns, every changed file, and leaves the 
   assert.equal(result.code, 0, result.stdout); assert.equal(result.stderr, '');
   assert.equal(result.report.summary.candidates, 2);
   assert.equal(result.report.summary.placementsAdded, 1);
-  assert.deepEqual(result.report.files.map(item => item.path), ['assetlib.catalog.json', 'src/TravelScreen.tsx', 'src/assetlib/client.ts', 'src/assets.generated.ts']);
+  assert.deepEqual(result.report.files.map(item => item.path), ['AGENTS.md', 'assetlib.catalog.json', 'src/TravelScreen.tsx', 'src/assetlib/client.ts', 'src/assets.generated.ts']);
   for (const file of result.report.files) { assert.match(file.diff, /^--- /); assert.match(file.diff, /\n\+\+\+ b\//); assert.match(file.diff, /\n@@ -\d+,\d+ \+\d+,\d+ @@\n/); }
   assert.match(result.report.files.find(item => item.path === 'src/TravelScreen.tsx').diff, /fallback=\{coast\}/);
   assert.match(result.report.files.find(item => item.path === 'src/assetlib/client.ts').diff, /assetlib.public.json/);
@@ -436,4 +437,91 @@ test('existing state-set keys reuse their top-level image fields without changin
   const result = await f.run(['--apply']); assert.equal(result.code, 0, result.stdout);
   assert.equal(result.report.summary.placementsAdded, 0); assert.equal(result.report.summary.placementsReused, 1);
   assert.deepEqual(JSON.parse(await f.get('assetlib.catalog.json')), catalog);
+});
+
+test('adopt keeps one Assetlib section for coding agents in AGENTS.md, and in CLAUDE.md unless it imports AGENTS.md', async t => {
+  const f = await fixture(t);
+  await f.put('src/TravelScreen.tsx', `import { Image } from 'react-native';\nexport const S = () => <Image source={require('../assets/coast-hero.png')} />;\n`);
+  await f.put('AGENTS.md', '# Rules\n\nKeep tests green.');
+  await f.put('CLAUDE.md', 'Use pnpm.\n');
+  const result = await f.run(['--apply']);
+  assert.equal(result.code, 0, result.stdout);
+  assert.deepEqual(result.report.files.map(item => item.path).filter(name => name.endsWith('.md')), ['AGENTS.md', 'CLAUDE.md']);
+  const agents = await f.get('AGENTS.md'), section = agents.slice(agents.indexOf(AGENTS_START));
+  assert.ok(agents.startsWith(`# Rules\n\nKeep tests green.\n\n${AGENTS_START}\n## Artwork that changes after release (Assetlib)\n`), agents);
+  assert.ok(agents.endsWith(`${AGENTS_END}\n`));
+  assert.match(section, /Images declared in `assetlib\.catalog\.json` are Assetlib placements/);
+  assert.match(section, /`asset=\{AppAssets\.Existing\.art\}` for `existing\.art`/);
+  assert.match(section, /description starts with "Assetlib placement" and the key/);
+  assert.match(section, /regenerate `src\/assets\.generated\.ts` with `assetlib-codegen`/);
+  assert.match(section, /Never create placements in the Assetlib console\./);
+  assert.equal(await f.get('CLAUDE.md'), `Use pnpm.\n\n${section}`);
+
+  // A later adoption replaces the section where it is, keeping what follows; a run with nothing new changes nothing.
+  await f.put('AGENTS.md', agents.replace('Never create placements in the Assetlib console.', 'Stale line.') + '\n## After\n');
+  await f.put('assets/beach.png', png(800, 600));
+  await f.put('src/Beach.tsx', `import { Image } from 'react-native';\nexport const B = () => <Image source={require('../assets/beach.png')} />;\n`);
+  assert.equal((await f.run(['--apply'])).code, 0);
+  const updated = await f.get('AGENTS.md');
+  assert.equal(updated.split(AGENTS_START).length, 2, 'one section');
+  assert.ok(!updated.includes('Stale line.') && updated.includes('Never create placements in the Assetlib console.'));
+  assert.ok(updated.startsWith('# Rules\n\nKeep tests green.\n\n') && updated.endsWith(`${AGENTS_END}\n\n## After\n`), updated);
+  const before = await snapshot(f.root), again = await f.run(['--apply']);
+  assert.equal(again.code, 3); assert.deepEqual(await snapshot(f.root), before);
+});
+
+test('adopt creates AGENTS.md when CLAUDE.md imports it, follows no symlink, and leaves broken markers alone with a note', async t => {
+  const source = `import { Image } from 'react-native';\nexport const S = () => <Image source={require('../assets/coast-hero.png')} />;\n`;
+  const imports = await fixture(t);
+  await imports.put('src/S.tsx', source); await imports.put('CLAUDE.md', '@AGENTS.md\n');
+  assert.equal((await imports.run(['--apply'])).code, 0);
+  assert.equal(await imports.get('CLAUDE.md'), '@AGENTS.md\n', 'Claude Code reads the section through the import');
+  assert.ok((await imports.get('AGENTS.md')).startsWith(AGENTS_START), 'a missing AGENTS.md is created');
+
+  const linked = await fixture(t);
+  await linked.put('src/S.tsx', source); await linked.put('AGENTS.md', '# Rules\n');
+  await symlink('AGENTS.md', path.join(linked.root, 'CLAUDE.md'));
+  const viaLink = await linked.run(['--apply']);
+  assert.ok(!viaLink.report.files.some(item => item.path === 'CLAUDE.md'));
+  assert.ok(!viaLink.report.notes.some(note => note.includes('symlink')), 'a CLAUDE.md that links to AGENTS.md needs no note');
+  assert.match(await linked.get('AGENTS.md'), /^# Rules\n\n<!-- assetlib:start -->/);
+
+  const outside = await fixture(t), elsewhere = await outside.put('../outside-agents.md', '# Shared\n');
+  t.after(() => rm(elsewhere, { force: true }));
+  await outside.put('src/S.tsx', source); await symlink(elsewhere, path.join(outside.root, 'AGENTS.md'));
+  const viaOutside = await outside.run(['--apply']);
+  assert.equal(viaOutside.code, 0);
+  assert.match(viaOutside.report.notes.join('\n'), /AGENTS\.md is a symlink, so adopt left it unchanged/);
+  assert.equal(await readFile(elsewhere, 'utf8'), '# Shared\n');
+
+  const broken = await fixture(t);
+  await broken.put('src/S.tsx', source); await broken.put('AGENTS.md', `# Rules\n${AGENTS_START}\nhalf a section\n`);
+  const viaBroken = await broken.run(['--apply']);
+  assert.equal(viaBroken.code, 0);
+  assert.match(viaBroken.report.notes.join('\n'), /AGENTS\.md has an unmatched or repeated Assetlib section marker/);
+  assert.equal(await broken.get('AGENTS.md'), `# Rules\n${AGENTS_START}\nhalf a section\n`);
+});
+
+test('the agent section keeps CRLF files CRLF, and refuses markers out of order or repeated', () => {
+  const section = agentSection({ catalogFile: 'assetlib.catalog.json', generatedFile: 'src/assets.generated.ts', example: null });
+  assert.ok(!section.includes('for example'), 'no example without a placement');
+  assert.equal(withAgentSection(null, section), section);
+  assert.equal(withAgentSection('', section), section);
+  const crlf = withAgentSection('# Rules\r\n', section);
+  assert.ok(crlf.startsWith('# Rules\r\n\r\n<!-- assetlib:start -->\r\n') && !/[^\r]\n/.test(crlf), 'every line ends in CRLF');
+  assert.equal(withAgentSection(crlf, section), crlf, 'replacing the same section changes nothing');
+  assert.equal(withAgentSection(`${AGENTS_END}\n${AGENTS_START}\n`, section), null);
+  assert.equal(withAgentSection(`${AGENTS_START}\n${AGENTS_END}\n${AGENTS_START}\n${AGENTS_END}\n`, section), null);
+  assert.equal(withAgentSection(`${AGENTS_END}\n`, section), null);
+  assert.equal(agentSection({ catalogFile: 'a`b\nc.json', generatedFile: 'g.ts', example: null }).includes('a`b'), false, 'paths cannot break out of code spans');
+});
+
+test('the CLI README shows the agent section exactly as adopt writes it', async () => {
+  const readme = await readFile(fileURLToPath(new URL('../README.md', import.meta.url)), 'utf8');
+  // The markers on lines of their own, not where the prose above names them.
+  const start = readme.indexOf(`\n${AGENTS_START}\n`) + 1, end = readme.indexOf(`\n${AGENTS_END}\n`, start) + 1;
+  assert.ok(start > 0 && end > start, 'the README shows the section');
+  const shown = readme.slice(start, end + AGENTS_END.length) + '\n';
+  assert.equal(shown, agentSection({ catalogFile: 'assetlib.catalog.json', generatedFile: 'src/assets.generated.ts',
+    example: { key: 'travel.coast-hero', symbol: ['Travel', 'coastHero'] } }));
 });

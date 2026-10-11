@@ -33,6 +33,7 @@ node ./node_modules/@assetlib/cli/bin/assetlib.mjs init --config ~/Downloads/ass
 - It adopts bundled images exactly as `adopt` does (the same patterns, skip reasons, limits, `--min-edge`, `--generated` and `--client-import`), but starts without a catalog and creates `assetlib.catalog.json`, the generated references and a starter client. `--src <dir>` (repeatable) defaults to `src`. `--image <file>` (repeatable) limits it to the images you choose. A catalog needs at least one placement, so when nothing can be adopted it writes nothing and exits 3.
 - `--config` is checked (schema version 1, `staging` or `production`, UUID `orgId` and `appId`, a `manifestUrl` for that app and environment over HTTPS, and at least one pinned key) and copied byte for byte to `assetlib.public.json`, which the starter client loads. The SDK checks the keys fully when the app loads the config. The config pins the key your app trusts, so take it only from your own console. An existing identical `assetlib.public.json` is kept; a different one stops `init`. Without `--config`, an existing `assetlib.public.json` is used.
 - `--ci github` (the default) writes `.github/workflows/assetlib-sync.yml`. It runs `assetlib sync` from the installed package's entry file on every push to `main`. The `ASSETLIB_TOKEN` repository secret reaches only that step: the actions are pinned to commits, checkout keeps no credentials (`persist-credentials: false`), and `npm ci --ignore-scripts` keeps dependency install scripts from running before it. The console origin and IDs come from the public config when it is on HTTPS (otherwise from the `ASSETLIB_CONSOLE`, `ASSETLIB_ORG` and `ASSETLIB_APP` repository variables), the app version from `app.json` (else `package.json`) in a step without the token, and the build number from the workflow run. Values reach the script as environment variables, never as `${{ }}` expressions inside it, and every literal is validated and single-quoted; `--src` folders whose names need more than letters, digits, `.`, `_`, `-` and `/` are refused. An existing workflow file is left unchanged. `--ci none` skips it.
+- Like `adopt`, it adds the [section for coding agents](#instructions-for-coding-agents) to `AGENTS.md`, the one existing file besides the adopted call sites that it may change.
 - It refuses to run when `assetlib.catalog.json` already exists (use `adopt`), needs `expo` in `package.json`, never writes through a symlink or outside the project, and, like `adopt`, never calls Git or the network.
 - It ends with the next steps: install the SDK packages from the same release, add the token secret, run a development build, and publish a change. Overview in the console ticks its setup checklist as the first sync, the first manifest request and the first update arrive.
 
@@ -126,6 +127,31 @@ Skipped image requires include the following reasons, each with `path:line`:
 Scope is intentionally local and bounded: source directories, generated output, local client modules, and image files must stay inside the catalog directory. Symlinks are not followed. Hidden entries, generated sources, and the same dependency/build directories listed under References below are excluded. Limits are 32 directory levels per selected source root, 20,000 entries, 500 source files, 256 KiB per source file, 2 MiB total source bytes, 32 MiB per image, and 128 MiB total image bytes. Overlapping source roots are scanned once. Parse failures and truncated scans appear as scan issues.
 
 Dimensions are the encoded pixel dimensions, not React Native layout dimensions. **Check `@2x` and `@3x` sources** before accepting them as placement canvases. Before committing, review every diff, configure the client with the correct public SDK config, ensure the SDK packages are installed, and run the app's typecheck and visual checks. In particular, review retained platform-specific image props for compatibility with `AssetlibImage`. Adoption never calls Git, commits or stashes, sends a network request, uploads an image, deletes or rewrites image bytes, changes app configuration, removes the original `Image` import or constant, or performs unsupported rewrites.
+
+## Instructions for coding agents
+
+When `adopt` or `init` adopts something, it also adds or updates one section in `AGENTS.md` beside the catalog, between `<!-- assetlib:start -->` and `<!-- assetlib:end -->`, and creates `AGENTS.md` when it is missing. Coding agents that read the repository then know where the catalog is, render placements with `AssetlibImage` and the generated reference, and add a placement in the catalog with a bundled fallback instead of in the console. They also use the placement instead of exporting the image when they build a screen from Figma: the Assetlib Figma plugin inserts placement art as a component whose description starts with "Assetlib placement" and the key, which Figma's MCP server passes to the agent.
+
+- `CLAUDE.md` gets the same section when it exists and does not import `AGENTS.md` with `@AGENTS.md`. A missing `CLAUDE.md` is not created.
+- Text outside the markers is kept. A later run replaces the section where it is, and the dry run shows its diff like any other file.
+- A symlinked `AGENTS.md` or `CLAUDE.md` is left unchanged with a note, unless it links to the other one. So is a file with an unmatched or repeated marker, or one over 256 KiB.
+- A run that adopts nothing writes nothing, the section included. To add it to an existing integration, paste it and fill in your catalog, generated file and one placement:
+
+```md
+<!-- assetlib:start -->
+## Artwork that changes after release (Assetlib)
+
+`assetlib adopt` keeps this section up to date; edit outside its markers. Images declared in `assetlib.catalog.json` are Assetlib placements: they can change after the app is released, and the bundled image is the fallback.
+
+- Read `assetlib.catalog.json` before adding or changing artwork.
+- Render a placement with `AssetlibImage` from `@assetlib/sdk-expo` and its generated reference, for example `asset={AppAssets.Travel.coastHero}` for `travel.coast-hero`, with the bundled image as `fallback`. Never point an `Image` at a placement's file instead.
+- In Figma, art inserted by the Assetlib plugin is a component whose description starts with "Assetlib placement" and the key, and whose layer name starts with the key. Use that key's generated reference; don't export the image from Figma.
+- To add art that should change after release, add a catalog entry and its bundled fallback image in the same change, then regenerate `src/assets.generated.ts` with `assetlib-codegen` (`assetlib adopt` does both for an existing `Image` call site). CI's `assetlib sync` declares it. Never create placements in the Assetlib console.
+- Never edit `src/assets.generated.ts` by hand; `assetlib check` compares it. Renaming a key creates a new placement, so ask first.
+- Not placements: the app icon, the splash screen, colors, and images that come from user or API data.
+- Agents never upload, publish or create tokens, and never put a token in code or chat.
+<!-- assetlib:end -->
+```
 
 ## Environment variables
 
