@@ -2,7 +2,7 @@
 
 An early TypeScript client for signed Assetlib image delivery. Works with the current schema-v1 HTTP delivery API. The Expo adapter supplies native and browser persistence; this package is also usable with your own storage adapter.
 
-The additive browser/JavaScript animation preview supports a restricted, validated Lottie profile with a mandatory still poster. Native image integrations continue using that poster; this does not add native animation playback.
+The additive JavaScript animation preview (browsers, and Expo on web, iOS and Android) supports a restricted, validated Lottie profile with a mandatory still poster. `resolveAnimation` returns verified JSON for a Lottie player that the app supplies; the SDK plays nothing itself. Image components and the native Swift and Kotlin SDKs continue using that poster.
 
 This preview is distributed as a versioned GitHub release tarball, not an npm registry package. Install the exact core and Expo tarballs supplied with the release together. A catalog generation step reads local JSON; app builds do not contact Assetlib.
 
@@ -187,12 +187,12 @@ const animation = await client.resolveAnimation(AppAssets.Cards.gold);
 if (animation.source === 'poster') {
   // Use ordinary client.resolve(ref), then the generic bundled placeholder if needed.
 } else {
-  // animation.data is validated JSON for a compatible browser Lottie player.
+  // animation.data is validated JSON for a compatible Lottie player that the app supplies.
   // animation.source is 'remote' or 'cache'; bytes and verified metadata are included.
 }
 ```
 
-`resolveAnimation(ref)` never plays content automatically. Respect reduced motion, display the still poster while loading or on playback failure, and dispose the player on selection changes/unmount. Ordinary `resolve(ref)` never fetches animation bytes. Use one client and a storage adapter accepting `StorageMime` (`AssetMime | 'application/json'`); JSON is not an image format candidate.
+`resolveAnimation(ref)` never plays content automatically. Respect reduced motion, display the still poster while loading or on playback failure, and dispose the player on selection changes/unmount. Ordinary `resolve(ref)` never fetches animation bytes. Use one client and a storage adapter accepting `StorageMime` (`AssetMime | 'application/json'`); JSON is not an image format candidate. Under the `disk` policy the Expo adapter caches verified JSON in the same bounded store as images: IndexedDB on web and `<sha256>.json` files on iOS and Android.
 
 The optional signed `animationSchemaVersion: 1` enables a per-slot `animation` descriptor containing `format: 'lottie'`, `profile: 'vector-v1'`, `mime: 'application/json'`, SHA-256, URL, bytes, width/height, frameRate, inPoint and outPoint. The SDK verifies same-origin app-scoped URLs, exact aspect ratio, signed byte count/hash, and equality between the signed metadata and parsed JSON before exposing data. Unknown schema/profile versions fail closed. Existing image-only clients can ignore the extension and use the mandatory WebP poster.
 

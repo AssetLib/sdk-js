@@ -25,7 +25,7 @@ import { createHash } from 'node:crypto';
 export const hashBytes = bytes => createHash('sha256').update(bytes).digest('hex');
 export const parsePublicConfig = value => value;
 export const createAssetClient = (config, options) => ({ config, options, flush: async () => { globalThis.__assetlibAdapter.flushes++; if (globalThis.__assetlibAdapter.flushError) throw new Error('offline'); }, dispose: () => { globalThis.__assetlibAdapter.disposals++; } });
-export { storageNamespace, verifyStoredState } from '${pathToFileURL(path.join(root, '../sdk-core/dist/index.js')).href}';
+export { LOTTIE_LIMITS, storageNamespace, verifyStoredState } from '${pathToFileURL(path.join(root, '../sdk-core/dist/index.js')).href}';
 export { resolveAccessibilityDescription } from '${pathToFileURL(path.join(root, '../sdk-core/dist/accessibility.js')).href}';
 `);
 await writeFile(path.join(temporary, 'platform.mjs'), `

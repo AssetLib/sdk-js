@@ -1,10 +1,16 @@
 import { Directory, File, Paths } from 'expo-file-system';
 import { fetch as expoFetch } from 'expo/fetch';
-import { SDK_LIMITS, verifyStoredState, type AssetlibConfig, type AssetStorage, type ResolvedAsset } from '@assetlib/sdk-core';
+import { LOTTIE_LIMITS, SDK_LIMITS, verifyStoredState, type AssetlibConfig, type AssetStorage, type ResolvedAsset } from '@assetlib/sdk-core';
 import { namespace, legacyNamespaces, installStorageKey, rasterDataUri, validateCacheKey, type ImageUri } from './shared';
 
 export const vectorRenderingSupported = false;
 export const platformFetch = expoFetch as unknown as typeof globalThis.fetch;
+// Raster images and verified Lottie JSON share one namespaced directory and its budget.
+const cacheFormats = new Map<string, { extension: string; maxBytes: number }>([
+  ['image/webp', { extension: 'webp', maxBytes: SDK_LIMITS.assetBytes }],
+  ['image/png', { extension: 'png', maxBytes: SDK_LIMITS.assetBytes }],
+  ['application/json', { extension: 'json', maxBytes: LOTTIE_LIMITS.bytes }],
+]);
 const locks = new Map<string, Promise<unknown>>();
 function exclusive<T>(key: string, fn: () => Promise<T>): Promise<T> {
   const next = (locks.get(key) ?? Promise.resolve()).then(fn, fn);
@@ -121,20 +127,21 @@ export function createPlatformStorage(config: AssetlibConfig): AssetStorage {
     getAsset: async hash => {
       validateCacheKey(hash);
       const { images } = directories(config);
-      for (const extension of ['webp', 'png']) {
+      for (const { extension, maxBytes } of cacheFormats.values()) {
         const file = new File(images, `${hash}.${extension}`);
-        if (file.exists && file.size <= SDK_LIMITS.assetBytes) return file.bytes();
+        if (file.exists && file.size <= maxBytes) return file.bytes();
       }
       return null;
     },
     putAsset: (hash, bytes, mime = 'image/webp') => exclusive(scope, async () => {
-      if (!['image/webp', 'image/png'].includes(mime)) throw new Error('This native adapter supports raster images only.');
-      const extension = mime === 'image/png' ? 'png' : 'webp';
+      const format = cacheFormats.get(mime);
+      if (!format) throw new Error('This native adapter caches PNG, WebP and Lottie JSON only.');
+      const { extension } = format;
       validateCacheKey(hash);
-      if (bytes.length > SDK_LIMITS.assetBytes) throw new Error('Image exceeds the cache entry bound.');
+      if (bytes.length > format.maxBytes) throw new Error(`${mime === 'application/json' ? 'Animation' : 'Image'} exceeds the cache entry bound.`);
       const { images } = directories(config);
       for (const entry of images.list()) if (entry instanceof File && entry.name.endsWith('.next')) entry.delete();
-      const entries = images.list().filter((entry): entry is File => entry instanceof File && /\.(webp|png)$/.test(entry.name) && entry.name !== `${hash}.${extension}`).sort((a, b) => (a.modificationTime ?? 0) - (b.modificationTime ?? 0));
+      const entries = images.list().filter((entry): entry is File => entry instanceof File && /\.(webp|png|json)$/.test(entry.name) && entry.name !== `${hash}.${extension}`).sort((a, b) => (a.modificationTime ?? 0) - (b.modificationTime ?? 0));
       let total = entries.reduce((sum, file) => sum + file.size, 0);
       while (entries.length >= SDK_LIMITS.cacheEntries || total + bytes.length > SDK_LIMITS.cacheBytes) {
         const oldest = entries.shift();

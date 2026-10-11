@@ -5,7 +5,7 @@ import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import ts from 'typescript';
-import { AssetClient, hashBytes, parsePublicConfig } from '../../sdk-core/dist/index.js';
+import { AssetClient, hashBytes, parsePublicConfig, LOTTIE_LIMITS, SDK_LIMITS } from '../../sdk-core/dist/index.js';
 
 // Exercise the real platform implementations and SDK verifier. Only the native
 // filesystem and IndexedDB platform boundaries are replaced; no adapter logic is mocked.
@@ -340,3 +340,94 @@ for (const platform of ['native', 'web']) {
     assert.equal(JSON.parse(await h.storage(config).loadState()).highestSequence, 4);
   });
 }
+
+// Verified Lottie JSON on the native disk cache: stored beside raster entries,
+// bounded like them, and reverified by the core on every read.
+const constant = k => ({ a: 0, k });
+const lottie = { v: '5.13.0', fr: 30, ip: 0, op: 60, w: 100, h: 60, nm: 'Card', ddd: 0, assets: [], layers: [{ ty: 4, ind: 1, ip: 0, op: 60, st: 0, sr: 1,
+  ks: { o: constant(100), r: constant(0), p: constant([0, 0]), a: constant([0, 0]), s: constant([100, 100]) },
+  shapes: [{ ty: 'rc', p: constant([50, 30]), s: constant([100, 60]), r: constant(4) }, { ty: 'fl', c: constant([0.1, 0.4, 0.9, 1]), o: constant(100), r: 1 }] }] };
+const lottieBytes = new TextEncoder().encode(JSON.stringify(lottie)), lottieHash = hashBytes(lottieBytes);
+const animatedRef = { key: 'cards.gold', width: 100, height: 60 };
+const posterUrl = `/api/delivery/${orgId}/${appId}/assets/${assetId}`, animationUrl = `${posterUrl}/animations/${lottieHash}`;
+const animatedEnvelope = () => {
+  const payload = JSON.stringify({ schemaVersion: 1, animationSchemaVersion: 1, orgId, appId, environment: 'production', sequence: 1, createdAt: '2026-10-10T12:00:00.000Z', slots: [{ ...animatedRef, screen: 'Cards', assetId, sha256: hashBytes(bytes), url: posterUrl, mime: 'image/webp', bytes: bytes.length,
+    animation: { format: 'lottie', profile: 'vector-v1', mime: 'application/json', sha256: lottieHash, url: animationUrl, bytes: lottieBytes.length, width: 100, height: 60, frameRate: 30, inPoint: 0, outPoint: 60 } }] });
+  return { algorithm: 'Ed25519', publicKey: keys[0].publicKey, keyId: keys[0].keyId, payload, signature: sign(null, Buffer.from(payload), keys[0].privateKey).toString('base64') };
+};
+const animatedService = () => {
+  const state = { offline: false, requests: [] };
+  return { state, fetch: async url => {
+    const pathname = new URL(url).pathname;
+    state.requests.push(pathname);
+    if (state.offline) throw new Error('offline');
+    if (pathname.endsWith('/manifest')) return new Response(JSON.stringify(animatedEnvelope()));
+    return new Response(pathname === animationUrl ? lottieBytes : bytes);
+  } };
+};
+const imagesDirectory = config => `/documents/assetlib-v1/${currentNamespace(config)}/images/`;
+const cacheFiles = config => [...globalThis.__assetlibStorage.files].filter(([name]) => name.startsWith(imagesDirectory(config)));
+
+for (const platform of ['native', 'web']) test(`${platform}: disk-cached verified animation is remote first, then cache after an offline restart`, async () => {
+  const h = harness(platform), config = configFor(), remote = animatedService();
+  const first = new AssetClient(config, { storage: h.storage(config), fetch: remote.fetch, cachePolicy: 'disk' });
+  await first.refresh();
+  const downloaded = await first.resolveAnimation(animatedRef);
+  assert.equal(downloaded.source, 'remote', downloaded.message); assert.deepEqual(downloaded.data, lottie);
+  if (platform === 'native') assert.deepEqual(cacheFiles(config).map(([name]) => name), [`${imagesDirectory(config)}${lottieHash}.json`]);
+  remote.state.offline = true; remote.state.requests = [];
+  const restarted = new AssetClient(config, { storage: h.storage(config), fetch: remote.fetch, cachePolicy: 'disk' });
+  const cached = await restarted.resolveAnimation(animatedRef);
+  assert.equal(cached.source, 'cache', cached.message); assert.equal(cached.sequence, 1);
+  assert.deepEqual(cached.bytes, lottieBytes); assert.deepEqual(cached.data, lottie);
+  assert.equal(remote.state.requests.length, 0, 'the restarted client reads the verified cache without the network');
+  if (platform === 'native') {
+    // Same length, different bytes: the core rehashes cached JSON before use.
+    const tampered = lottieBytes.slice(); tampered[tampered.length - 2] ^= 1;
+    globalThis.__assetlibStorage.files.set(`${imagesDirectory(config)}${lottieHash}.json`, tampered);
+    const rejected = await new AssetClient(config, { storage: h.storage(config), fetch: remote.fetch }).resolveAnimation(animatedRef);
+    assert.equal(rejected.source, 'poster'); assert.equal(rejected.data, undefined);
+    assert.deepEqual(remote.state.requests, [animationUrl], 'rejected cached bytes lead to a download attempt, which fails offline');
+  }
+});
+
+test('native: the adapter stores and reads back Lottie JSON, rejects other formats and keeps raster entries', async () => {
+  const h = harness('native'), config = configFor(), storage = h.storage(config), dir = imagesDirectory(config);
+  await storage.putAsset(lottieHash, lottieBytes, 'application/json');
+  assert.deepEqual(globalThis.__assetlibStorage.files.get(`${dir}${lottieHash}.json`), lottieBytes);
+  assert.deepEqual(await storage.getAsset(lottieHash), lottieBytes);
+  for (const mime of ['image/svg+xml', 'application/pdf', 'text/plain', 'constructor']) {
+    await assert.rejects(storage.putAsset('c'.repeat(64), bytes, mime), /caches PNG, WebP and Lottie JSON only/, mime);
+  }
+  await assert.rejects(storage.putAsset('../escape', lottieBytes, 'application/json'), /Invalid cache key/);
+  await assert.rejects(storage.putAsset('d'.repeat(64), new Uint8Array(LOTTIE_LIMITS.bytes + 1), 'application/json'), /Animation exceeds the cache entry bound/);
+  await storage.putAsset('d'.repeat(64), new Uint8Array(LOTTIE_LIMITS.bytes + 1), 'image/webp');
+  assert.equal(cacheFiles(config).length, 2, 'rejected writes leave no file; the raster bound is unchanged');
+  // An oversized JSON file is never read back, and existing .webp entries still are.
+  globalThis.__assetlibStorage.files.set(`${dir}${'e'.repeat(64)}.json`, new Uint8Array(LOTTIE_LIMITS.bytes + 1));
+  assert.equal(await storage.getAsset('e'.repeat(64)), null);
+  globalThis.__assetlibStorage.files.set(`${dir}${'f'.repeat(64)}.webp`, bytes.slice());
+  assert.deepEqual(await storage.getAsset('f'.repeat(64)), bytes);
+});
+
+test('native: Lottie JSON counts toward the shared entry and byte eviction budget', async () => {
+  const h = harness('native'), config = configFor(), storage = h.storage(config), dir = imagesDirectory(config);
+  const key = index => hashBytes(new TextEncoder().encode(`entry-${index}`));
+  const total = () => cacheFiles(config).reduce((sum, [, value]) => sum + value.length, 0);
+  await storage.putAsset(lottieHash, lottieBytes, 'application/json');
+  for (let index = 0; index < SDK_LIMITS.cacheEntries; index++) await storage.putAsset(key(index), bytes, 'image/webp');
+  assert.equal(cacheFiles(config).length, SDK_LIMITS.cacheEntries);
+  assert.equal(globalThis.__assetlibStorage.files.has(`${dir}${lottieHash}.json`), false, 'the oldest entry, an animation, was evicted by count');
+  for (const [name] of cacheFiles(config)) globalThis.__assetlibStorage.files.delete(name);
+  const large = new Uint8Array(SDK_LIMITS.assetBytes), animation = new Uint8Array(LOTTIE_LIMITS.bytes);
+  await storage.putAsset(lottieHash, animation, 'application/json');
+  const fits = Math.floor((SDK_LIMITS.cacheBytes - animation.length) / large.length);
+  for (let index = 0; index < fits; index++) await storage.putAsset(key(index), large, 'image/webp');
+  assert.equal(globalThis.__assetlibStorage.files.has(`${dir}${lottieHash}.json`), true);
+  await storage.putAsset(key(fits), new Uint8Array(SDK_LIMITS.cacheBytes - fits * large.length), 'image/png');
+  assert.ok(total() <= SDK_LIMITS.cacheBytes);
+  assert.equal(globalThis.__assetlibStorage.files.has(`${dir}${lottieHash}.json`), false, 'the oldest entry, an animation, was evicted by bytes');
+  await storage.putAsset('a'.repeat(64), animation, 'application/json');
+  assert.ok(total() <= SDK_LIMITS.cacheBytes && cacheFiles(config).length <= SDK_LIMITS.cacheEntries);
+  assert.equal(globalThis.__assetlibStorage.files.has(`${dir}${'a'.repeat(64)}.json`), true);
+});

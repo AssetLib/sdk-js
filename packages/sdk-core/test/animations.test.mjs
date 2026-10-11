@@ -173,6 +173,28 @@ test('verified animation survives offline restart; first-use offline returns a p
   assert.equal((await new AssetClient(config, { storage: createMemoryStorage(), fetch: delivery.fetch }).resolveAnimation(card1.ref)).source, 'poster');
 });
 
+test('disk policy stores verified animation JSON through a durable adapter and serves it after an offline restart', async () => {
+  // Like the Expo native adapter, this disk adapter keeps the MIME and refuses formats it cannot store.
+  const disk = new Map(), writes = [];
+  const storage = { ...createMemoryStorage(),
+    async getAsset(hash) { return disk.get(hash)?.slice() ?? null; },
+    async putAsset(hash, bytes, mime) {
+      if (!['image/webp', 'image/png', 'application/json'].includes(mime)) throw new Error('Unsupported cache format.');
+      writes.push({ hash, mime, bytes: bytes.length }); disk.set(hash, bytes.slice());
+    } };
+  const delivery = service();
+  const client = new AssetClient(config, { storage, fetch: delivery.fetch, cachePolicy: 'disk' });
+  await client.refresh();
+  const downloaded = await client.resolveAnimation(card1.ref);
+  assert.equal(downloaded.source, 'remote'); assert.deepEqual(downloaded.data, vectorAnimation());
+  assert.deepEqual(writes, [{ hash: card1.slot.animation.sha256, mime: 'application/json', bytes: card1.bytes.length }]);
+  delivery.state.offline = true; delivery.state.requests = [];
+  const restarted = new AssetClient(config, { storage, fetch: delivery.fetch, cachePolicy: 'disk' });
+  const cached = await restarted.resolveAnimation(card1.ref);
+  assert.equal(cached.source, 'cache'); assert.equal(cached.sequence, 1); assert.deepEqual(cached.data, vectorAnimation());
+  assert.equal(delivery.state.requests.length, 0);
+});
+
 test('tampered animation and signed unsupported profile bytes are never passed to player or cached', async () => {
   for (const kind of ['hash', 'profile', 'keyframes', 'metadata', 'truncated']) {
     const delivery = service(); const storage = createMemoryStorage();
