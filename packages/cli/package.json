@@ -1,6 +1,6 @@
 {
   "name": "@assetlib/cli",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Register checked-in Assetlib catalogs and bounded code references from application builds.",
   "license": "MIT",
   "type": "module",
@@ -15,7 +15,7 @@
     "image-size": "2.0.4",
     "typescript": "5.9.3"
   },
-  "publishConfig": { "access": "public", "provenance": false },
+  "publishConfig": { "access": "public" },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/AssetLib/sdk-js.git",

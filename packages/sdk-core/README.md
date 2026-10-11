@@ -4,7 +4,7 @@ An early TypeScript client for signed Assetlib image delivery. Works with the cu
 
 The additive JavaScript animation preview (browsers, and Expo on web, iOS and Android) supports a restricted, validated Lottie profile with a mandatory still poster. `resolveAnimation` returns verified JSON for a Lottie player that the app supplies; the SDK plays nothing itself. Image components and the native Swift and Kotlin SDKs continue using that poster.
 
-This preview is distributed as a versioned GitHub release tarball, not an npm registry package. Install the exact core and Expo tarballs supplied with the release together. A catalog generation step reads local JSON; app builds do not contact Assetlib.
+This preview is on npm under the `preview` dist-tag, and each GitHub release attaches the same package as a tarball. Install core and Expo at the same exact version. A catalog generation step reads local JSON; app builds do not contact Assetlib.
 
 ## Client
 

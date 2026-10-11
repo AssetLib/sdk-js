@@ -17,20 +17,26 @@ Copy the public SDK configuration from the console into a demo’s **Connect** s
 | [`@assetlib/cli`](packages/cli) | `assetlib init` to set up an Expo app, `assetlib sync` build and catalog registration, `hash`, `check` for generated references, and the dry-run-first `adopt` codemod |
 | [`@assetlib/audit`](packages/audit) | Read-only PNG/JPEG/WebP inventory, duplicate evidence, dimension candidates, optional literal-reference hints |
 
-Separate [Swift](https://github.com/AssetLib/sdk-swift) and [Kotlin](https://github.com/AssetLib/sdk-android) previews are available. The SDK and CLI packages are not on the npm registry; install them from the tarballs attached to a GitHub release. Only the read-only audit is published to npm, and its agent plugin lives in [AssetLib/agent-plugins](https://github.com/AssetLib/agent-plugins). This repository does not include a remote MCP server. SDK source and release tarballs are public; the hosted Assetlib console is a separate service.
+Separate [Swift](https://github.com/AssetLib/sdk-swift) and [Kotlin](https://github.com/AssetLib/sdk-android) previews are available. The SDK and CLI packages are developer previews on npm under the `preview` dist-tag, and each GitHub release attaches the same packages as tarballs with `SHA256SUMS`. The read-only audit is on npm too, and its agent plugin lives in [AssetLib/agent-plugins](https://github.com/AssetLib/agent-plugins). This repository does not include a remote MCP server. SDK source and release tarballs are public; the hosted Assetlib console is a separate service.
 
 ## Install the preview SDKs
 
-Use both exact tarball URLs from the matching GitHub release. The core package is precompiled; Expo consumes the adapter's Metro-ready source. Installing these packages does not request an Assetlib account or fetch a cloud catalog.
+Install the same exact version of core and Expo. The core package is precompiled; Expo consumes the adapter's Metro-ready source. Installing these packages does not request an Assetlib account or fetch a cloud catalog.
 
 ```sh
-npm install \
-  https://github.com/AssetLib/sdk-js/releases/download/v0.5.2-preview.1/assetlib-sdk-core-0.5.2-preview.1.tgz \
-  https://github.com/AssetLib/sdk-js/releases/download/v0.5.2-preview.1/assetlib-sdk-expo-0.5.2-preview.1.tgz
+npm install --save-exact @assetlib/sdk-core@0.5.3-preview.1 @assetlib/sdk-expo@0.5.3-preview.1
 npx expo install expo-file-system expo-image
 ```
 
-The preview targets Expo 57, React Native 0.86, and React 19. Pin the installed versions in your application's lockfile. Check `SHA256SUMS` attached to the release when reviewing downloaded artifacts. The same release attaches the `assetlib` CLI as `assetlib-cli-0.3.0.tgz`; see the [CLI install steps](packages/cli/README.md#install).
+The npm packages are the files attached to the GitHub release. To install from the release instead:
+
+```sh
+npm install \
+  https://github.com/AssetLib/sdk-js/releases/download/v0.5.3-preview.1/assetlib-sdk-core-0.5.3-preview.1.tgz \
+  https://github.com/AssetLib/sdk-js/releases/download/v0.5.3-preview.1/assetlib-sdk-expo-0.5.3-preview.1.tgz
+```
+
+The preview targets Expo 57, React Native 0.86, and React 19. Pin the installed versions in your application's lockfile. Check `SHA256SUMS` attached to the release when reviewing downloaded artifacts. The `assetlib` CLI is `@assetlib/cli` 0.3.1, also attached to the release as `assetlib-cli-0.3.1.tgz`; see the [CLI install steps](packages/cli/README.md#install).
 
 ## Connect one artwork placement
 
@@ -93,4 +99,4 @@ npm run verify
 npm run pack:release
 ```
 
-Verification builds the core, runs the core, Expo, audit, and CLI tests, typechecks the Expo adapter, and checks the CLI entry point. Packing writes four tarballs (core, Expo, audit, and CLI) and their SHA-256 checksums into `release/`; it does not publish to npm or GitHub. GitHub releases attach the core, Expo, and CLI tarballs; the audit is published to npm. See [CONTRIBUTING](CONTRIBUTING.md) and [SECURITY](SECURITY.md).
+Verification builds the core, runs the core, Expo, audit, and CLI tests, typechecks the Expo adapter, and checks the CLI entry point. Packing writes four tarballs (core, Expo, audit, and CLI) and their SHA-256 checksums into `release/`; it does not publish to npm or GitHub. GitHub releases attach the core, Expo, and CLI tarballs, and the same tarballs are published to npm under the `preview` dist-tag; the audit is published to npm. See [CONTRIBUTING](CONTRIBUTING.md) and [SECURITY](SECURITY.md).

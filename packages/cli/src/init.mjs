@@ -154,7 +154,7 @@ export async function init({ root: requestedRoot, src, images, config: configOpt
     for (const item of extras) { await mkdir(path.dirname(item.file), { recursive: true }); await writable(item.file); await writeFile(item.file, item.text, { flag: 'wx' }); }
   }
   report.next = [
-    'Install @assetlib/sdk-core, @assetlib/sdk-expo and @assetlib/cli from the same GitHub release as this CLI (see the CLI README). They are not on npm: never install them by name.',
+    'Install @assetlib/sdk-core and @assetlib/sdk-expo at one exact version, and @assetlib/cli, from npm or from the same GitHub release as this CLI (see the CLI README). Never install the unscoped assetlib package.',
     ...(ci === 'github' ? ['Add the ASSETLIB_TOKEN repository secret: a token with the Declare scope from Settings › Tokens. The first push to main then registers the placements.'] : ['Run assetlib sync in CI on every build (see the CLI README).']),
     'Run a development build. Overview in the console ticks "Declare placements" after the first sync and "Connect your app" when the build first requests a manifest.',
     'Publish a change in the console and refresh the app: "Update an image without an app release" ticks when the app requests it.',

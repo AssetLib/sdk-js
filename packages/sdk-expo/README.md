@@ -2,7 +2,7 @@
 
 Expo SDK 57 / React Native 0.86 image delivery adapter for `@assetlib/sdk-core`. One integration targets iOS, Android, and Expo web. This is a preview SDK, not separate Swift or Kotlin SDKs.
 
-Install **both exact core and Expo tarball URLs from the same GitHub release** as direct dependencies. The Expo package depends on the matching core preview version; neither package is published to the npm registry. The host app needs Expo 57, React 19, React Native 0.86, and matching `expo-file-system` and `expo-image` versions:
+Install **`@assetlib/sdk-core` and `@assetlib/sdk-expo` at the same exact version** as direct dependencies, from npm (`preview` dist-tag) or as the tarballs attached to the same GitHub release. The Expo package depends on that exact core version. The host app needs Expo 57, React 19, React Native 0.86, and matching `expo-file-system` and `expo-image` versions:
 
 ```sh
 npx expo install expo-file-system expo-image
@@ -208,7 +208,7 @@ await client.flush();
 client.dispose(); // Remove the AppState listener and stop observation timers.
 ```
 
-The adapter identifies itself as `sdk-expo` version `0.5.2-preview.1`. An explicit `telemetry.sdk` or `telemetry.build` takes precedence. When the runtime can optionally require `expo-application` or `expo-constants`, the adapter reads native app version and build number (falling back to Expo config version/build). Missing packages, unavailable runtime loaders, and throwing native bridges are ignored; no new dependency is required. Supply `build` explicitly for reliable production attribution, especially with bundlers that cannot resolve optional runtime requires or in Expo Go. Without complete runtime metadata or an explicit build, batches use platform `expo` and version/build `unknown`.
+The adapter identifies itself as `sdk-expo` version `0.5.3-preview.1`. An explicit `telemetry.sdk` or `telemetry.build` takes precedence. When the runtime can optionally require `expo-application` or `expo-constants`, the adapter reads native app version and build number (falling back to Expo config version/build). Missing packages, unavailable runtime loaders, and throwing native bridges are ignored; no new dependency is required. Supply `build` explicitly for reliable production attribution, especially with bundlers that cannot resolve optional runtime requires or in Expo Go. Without complete runtime metadata or an explicit build, batches use platform `expo` and version/build `unknown`.
 
 Only the observation contract fields are sent: environment, SDK name/version, build platform/version/number, random install ID, send time, and coalesced events with placement key, kind/count, source, asset ID/release sequence when known, effective arm/appearance when selected, and fallback reason. Bundle outcomes send only `fallback` events without asset ID or sequence. Dynamic catalog references do not emit observations because they have no placement key. Image bytes, descriptions, URLs, device identifiers, account identifiers, and status/error messages are not included.
 

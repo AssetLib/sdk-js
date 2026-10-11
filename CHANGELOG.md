@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.3-preview.1 — October 10, 2026
+
+- First npm publication of the SDK and CLI: `@assetlib/sdk-core` and `@assetlib/sdk-expo` 0.5.3-preview.1 and `@assetlib/cli` 0.3.1, under the `preview` dist-tag. The npm packages are the same files as the tarballs attached to the GitHub release. Install with `npm install --save-exact @assetlib/sdk-core@0.5.3-preview.1 @assetlib/sdk-expo@0.5.3-preview.1` and `npm install --save-dev --save-exact @assetlib/cli@0.3.1`. The unscoped `assetlib` package on npm is not ours.
+- No behavior change from 0.5.2-preview.1 except for publishing: the core's `assetlib-codegen` bin path no longer starts with `./`, which npm drops; core and Expo declare their repository and public access; the CLI no longer sets `provenance: false`; and `assetlib init`'s next steps no longer say the packages are not on npm.
+
 ## @assetlib/audit 0.2.0 — October 10, 2026
 
 - Only the audit is released, on npm. The SDKs and the CLI are unchanged from 0.5.2-preview.1. 0.2.0 also carries the `Vendor` skip listed under 0.5.0-preview.1, which npm's 0.1.0 does not have. The audit tarball attached to the v0.5.0-preview.1 GitHub release is labeled 0.1.0 but was packed from that later source, so it differs from npm's 0.1.0.
