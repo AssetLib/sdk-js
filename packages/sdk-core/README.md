@@ -121,7 +121,7 @@ Check a catalog into your application:
 node node_modules/@assetlib/sdk-core/bin/codegen.mjs assetlib.catalog.json > src/assets.generated.ts
 ```
 
-Use `AppAssets.Travel.coast` in application code. Existing compatible artwork updates do not require regenerating this catalog. Adding a new application placement does. Schema v1 identifies placements by key and exact width/height; stable placement IDs and separately versioned contracts are not implemented yet. Renaming a key requires a coordinated migration, not simply renaming it in the console.
+Use `AppAssets.Travel.coast` in application code. Existing compatible artwork updates do not require regenerating this catalog. Adding a new application placement does. Schema v1 identifies placements by key and by width and height. The size is a reference, not a crop: it fixes the aspect ratio every published image must match (the console checks it when an image is assigned and again at publish), and it is the size `resolve` requests when the caller passes no `pixelWidth` and `pixelHeight`; published images may have any pixel size at that aspect ratio. Stable placement IDs and separately versioned contracts are not implemented yet. Renaming a key requires a coordinated migration, not simply renaming it in the console.
 
 ## Appearance and arm variants
 
@@ -251,7 +251,7 @@ Tests include the shared cross-platform contract corpus (`test/fixtures/shared`,
 
 Release 0.4.0-preview.1 adds `StateSetRef` / `resolveStateSet`, signed `loadAssetPage` / `resolveAsset` runtime handles, and `cachePolicy: 'disk' | 'memory' | 'none'`. The default remains `disk`; ephemeral image policies preserve durable signed release state. Image requests are cancellable and bounded to four concurrent transfers by default. `clearMemoryCache()` releases retained session bytes.
 
-A state set declares 2–16 unique states in the checked-in catalog (`placements[].states`); code generation preserves those literal names. Resolve the complete family once and select its returned state. If any required member is unavailable, the whole family uses an eligible older cached release or the bundled family. If the current release does not publish the key, the result is the complete bundled family without consulting older releases. Do not substitute one progress stage for another.
+A state set declares 2–16 unique states in the checked-in catalog (`placements[].states`); code generation preserves those literal names. The names mean nothing to Assetlib: the app chooses the state, and the console publishes the family only when every state has an image at the placement's aspect ratio (pixel sizes may differ), so a release never mixes states from different publications. Resolve the complete family once and select its returned state. If any required member is unavailable, the whole family uses an eligible older cached release or the bundled family. If the current release does not publish the key, the result is the complete bundled family without consulting older releases. Do not substitute one progress stage for another.
 
 Catalog metadata pages are signed, scoped to the app/release/request cursor, and contain at most 50 image references. They fetch no image bodies. Preserve the first page's `sequence` on continuation requests. Runtime handles are bound to their issuing client and cannot be serialized or reconstructed as trusted references. Use the Expo virtualized-list example for visible-only image resolution.
 

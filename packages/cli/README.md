@@ -126,7 +126,7 @@ Skipped image requires include the following reasons, each with `path:line`:
 
 Scope is intentionally local and bounded: source directories, generated output, local client modules, and image files must stay inside the catalog directory. Symlinks are not followed. Hidden entries, generated sources, and the same dependency/build directories listed under References below are excluded. Limits are 32 directory levels per selected source root, 20,000 entries, 500 source files, 256 KiB per source file, 2 MiB total source bytes, 32 MiB per image, and 128 MiB total image bytes. Overlapping source roots are scanned once. Parse failures and truncated scans appear as scan issues.
 
-Dimensions are the encoded pixel dimensions, not React Native layout dimensions. **Check `@2x` and `@3x` sources** before accepting them as placement canvases. Before committing, review every diff, configure the client with the correct public SDK config, ensure the SDK packages are installed, and run the app's typecheck and visual checks. In particular, review retained platform-specific image props for compatibility with `AssetlibImage`. Adoption never calls Git, commits or stashes, sends a network request, uploads an image, deletes or rewrites image bytes, changes app configuration, removes the original `Image` import or constant, or performs unsupported rewrites.
+Dimensions are the encoded pixel dimensions, not React Native layout dimensions. **Check `@2x` and `@3x` sources** before accepting them as the placement's width and height: the catalog size fixes the aspect ratio every published image must match, and it is the size the SDK requests unless the component passes `pixelWidth` and `pixelHeight`, so a `@3x` source triples the default request. Before committing, review every diff, configure the client with the correct public SDK config, ensure the SDK packages are installed, and run the app's typecheck and visual checks. In particular, review retained platform-specific image props for compatibility with `AssetlibImage`. Adoption never calls Git, commits or stashes, sends a network request, uploads an image, deletes or rewrites image bytes, changes app configuration, removes the original `Image` import or constant, or performs unsupported rewrites.
 
 ## Instructions for coding agents
 
@@ -191,7 +191,7 @@ References are deduplicated and selected in sorted POSIX path order, up to 200 t
 | `2` | Completed with a partial reference scan; inspect stderr for limits or unreadable paths. |
 | `3` | `adopt` found no new supported call sites, or `init` found no image it could adopt. No files changed. |
 
-A request error takes precedence over the partial-scan exit code. Re-registering the same platform, app version, and build number replaces that build's declarations and references; created, existing, and conflicting placements are summarized. Conflicts are reported without changing the exit code by themselves.
+A placement someone requested in the console with the same key, width, height, states, default state, variants and rendering becomes declared by the build; a different contract is reported as conflicting, and the console keeps its own. A request error takes precedence over the partial-scan exit code. Re-registering the same platform, app version, and build number replaces that build's declarations and references; created, existing, and conflicting placements are summarized. Conflicts are reported without changing the exit code by themselves.
 
 ## Verification
 

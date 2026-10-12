@@ -128,7 +128,7 @@ For decorative artwork, set `accessibilityMode="decorative"`; the image is hidde
 
 ## Artwork states in one component
 
-Use a state set for artwork that belongs to a single placement, such as a plant progressing from sprout to full growth. The application chooses the state from its own business logic. Every declared state needs a bundled fallback.
+Use a state set for artwork that belongs to a single placement, such as a plant progressing from sprout to full growth. The application chooses the state from its own business logic; the state names mean nothing to Assetlib. Every declared state needs a bundled fallback. The console publishes the family only when every state has an image at the placement's aspect ratio (pixel sizes may differ), and a release never mixes states from different publications.
 
 ```tsx
 import { AssetlibStateImage, type StateSetRef } from '@assetlib/sdk-expo';
