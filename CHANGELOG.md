@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.1-preview.1 — October 13, 2026
+
+- `@assetlib/sdk-core`, `@assetlib/sdk-expo` and `@assetlib/cli` 0.4.1 change only their version and README. No code changed.
+- The core README says the catalog width and height are a reference, not a crop: they fix the aspect ratio every published image must match (the console checks it when an image is assigned and again at publish) and are the size `resolve` requests when no `pixelWidth` and `pixelHeight` are passed; published images may have any pixel size at that aspect ratio. The CLI README's adopt section says the catalog size fixes that aspect ratio and the default request, so a `@3x` source triples the default request.
+- The core and Expo READMEs say state names mean nothing to Assetlib: the app chooses the state, and the console publishes a state family only when every state has an image at the placement's aspect ratio (pixel sizes may differ), so a release never mixes states from different publications.
+- The CLI README says a placement someone requested in the console becomes declared by a build whose catalog has the same key, width, height, states, default state, variants and rendering; a different contract is reported as conflicting, and the console keeps its own.
+- `@assetlib/audit` 0.2.1 is unchanged.
+
 ## 0.7.0-preview.1 — October 11, 2026
 
 - `@assetlib/sdk-core`: placement membership, contract revision of October 11, 2026. The latest accepted release alone decides whether a placement has published artwork. If it has no slot with the reference's key, `resolve` returns the bundled fallback (`source: 'bundle'`, `fallbackReason: 'missing'`, the reference's `bundledAccessibility` when present) and `resolveStateSet` returns the complete bundled family. Neither reads the cache, makes a request, calls `decide` or uses an older retained release. Before, a cached image from an older release kept showing until eight newer releases had arrived, so restoring a publication that predates a placement could not take back an image a device had already downloaded for it. When the current release publishes the key, resolution is unchanged: an incompatible slot (size, rendering or state set) or bytes that cannot be downloaded or verified still fall back to compatible cached bytes from older retained releases, which are never downloaded, then to the bundled fallback. Cached bytes are kept, so publishing the same image for the key again is a cache hit. No API, type or wire format change.
