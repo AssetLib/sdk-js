@@ -63,6 +63,8 @@ permissions:
   contents: read
 jobs:
   sync:
+    # Only main holds the token: a manual run from another branch is skipped.
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: ${CHECKOUT}
@@ -71,20 +73,17 @@ jobs:
       - uses: ${SETUP_NODE}
         with:
           node-version: 22
-      # Dependency install scripts stay off: this job needs none, and the step after next holds the token.
+      # Dependency install scripts stay off: this job needs none, and the next step holds the token.
       - run: npm ci --ignore-scripts
-      - name: Read the app version
-        id: app
-        run: echo "version=$(node -p "${version}")" >> "$GITHUB_OUTPUT"
       - name: Register placements
         env:
           ASSETLIB_TOKEN: \${{ secrets.ASSETLIB_TOKEN }}
           ASSETLIB_CONSOLE: ${value(origin, 'ASSETLIB_CONSOLE')}
           ASSETLIB_ORG: ${value(orgId, 'ASSETLIB_ORG')}
           ASSETLIB_APP: ${value(appId, 'ASSETLIB_APP')}
-          APP_VERSION: \${{ steps.app.outputs.version }}
           BUILD_NUMBER: \${{ github.run_number }}
         run: |
+          APP_VERSION="$(node -p "${version}")"
           node ./node_modules/@assetlib/cli/bin/assetlib.mjs sync --catalog assetlib.catalog.json --platform expo \\
             --app-version "$APP_VERSION" --build-number "$BUILD_NUMBER"${references}
 `;

@@ -73,7 +73,9 @@ test('init --apply writes the plan once and then refuses to run again', async t 
   assert.match(workflow, new RegExp(`ASSETLIB_CONSOLE: 'https://console\\.example\\.com'\\n\\s+ASSETLIB_ORG: '${org}'\\n\\s+ASSETLIB_APP: '${app}'`));
   assert.match(workflow, /node \.\/node_modules\/@assetlib\/cli\/bin\/assetlib\.mjs sync --catalog assetlib\.catalog\.json --platform expo/);
   assert.match(workflow, /--app-version "\$APP_VERSION" --build-number "\$BUILD_NUMBER" --references 'src'/);
-  assert.match(workflow, /run: echo "version=\$\(node -p "require\('\.\/app\.json'\)\.expo\.version"\)" >> "\$GITHUB_OUTPUT"/);
+  assert.match(workflow, /APP_VERSION="\$\(node -p "require\('\.\/app\.json'\)\.expo\.version"\)"/);
+  assert.match(workflow, /if: github\.ref == 'refs\/heads\/main'/);
+  assert.doesNotMatch(workflow, /GITHUB_OUTPUT|steps\.app/);
   assert.doesNotMatch(workflow, /npx|npm install|PUBLIC KEY/, 'the CLI runs from the installed package and no key is copied into CI');
   const again = await p.run([], false);
   assert.equal(again.code, 1);
@@ -166,7 +168,7 @@ test('the workflow keeps the token to one step: pinned actions, no stored creden
   assert.match(workflow, /run: npm ci --ignore-scripts/);
   assert.equal((workflow.match(/secrets\.ASSETLIB_TOKEN/g) ?? []).length, 1, 'only the sync step sees the token');
   const scripts = [...workflow.matchAll(/run: \|\n((?: {10}.*\n?)+)|run: (.*)/g)].map(match => match[1] ?? match[2]);
-  assert.ok(scripts.length >= 3);
+  assert.ok(scripts.length >= 2);
   for (const script of scripts) assert.doesNotMatch(script, /\$\{\{/, 'no GitHub expression is expanded inside a shell script');
 });
 
