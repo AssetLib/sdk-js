@@ -150,7 +150,8 @@ export async function init({ root: requestedRoot, src, images, config: configOpt
   const sourceDirs = (src?.length ? src : ['src']).map(inProject);
   for (const dir of sourceDirs) if (!(await exists(dir))) throw new Error(`--src directory not found: ${slash(path.relative(root, dir)) || '.'}`);
 
-  const notes = [], extras = [];
+  // Notes about files init would write join the report only when something is set up.
+  const notes = [], extras = [], planned = [];
   // Every file init writes itself must resolve inside the project without a symlink anywhere on its path.
   const writable = async file => { try { await safeDestination(root, file); } catch { throw new Error(`init will not write ${slash(path.relative(root, file))} through a symlink or onto a non-file.`); } };
   let target = null;
@@ -180,12 +181,12 @@ export async function init({ root: requestedRoot, src, images, config: configOpt
       // CI never sends the token to a non-HTTPS console; a loopback config leaves the console to a repository variable.
       const ciTarget = target?.origin.startsWith('https://') ? target : null;
       extras.push({ file: workflow, text: syncWorkflow({ console: ciTarget?.origin, orgId: ciTarget?.orgId, appId: ciTarget?.appId, srcDirectories: sourceDirs.map(dir => slash(path.relative(root, dir)) || '.'), appVersionFile }) });
-      if (!ciTarget) notes.push(`The workflow reads ASSETLIB_CONSOLE, ASSETLIB_ORG and ASSETLIB_APP from repository variables${target ? ' because the public config is not on an HTTPS console' : ' until a public config is given'}.`);
+      if (!ciTarget) planned.push(`The workflow reads ASSETLIB_CONSOLE, ASSETLIB_ORG and ASSETLIB_APP from repository variables${target ? ' because the public config is not on an HTTPS console' : ' until a public config is given'}.`);
     }
   }
 
-  if (/^[\^~]?57(?:\.|$)/.test(dependencies.expo)) extras.push(...await scenePlugin(root, writable, notes));
-  else if (/^[\^~]?5[4-6](?:\.|$)/.test(dependencies.expo)) notes.push('Expo SDK 54 to 56 iOS templates do not adopt the UIScene life cycle, which apps built with Xcode 27 need to launch on iOS 27, and expo before 57 has no ExpoAppSceneDelegate to adopt it with. Build iOS with Xcode 26, or move to Expo SDK 57, where init adds a plugin for it.');
+  if (/^[\^~]?57(?:\.|$)/.test(dependencies.expo)) extras.push(...await scenePlugin(root, writable, planned));
+  else if (/^[\^~]?5[4-6](?:\.|$)/.test(dependencies.expo)) planned.push('Expo SDK 54 to 56 iOS templates do not adopt the UIScene life cycle, which apps built with Xcode 27 need to launch on iOS 27, and expo before 57 has no ExpoAppSceneDelegate to adopt it with. Build iOS with Xcode 26, or move to Expo SDK 57, where init adds a plugin for it.');
 
   // Plan the adoption first: it decides whether there is anything to set up at all.
   const empty = { schemaVersion: 1, placements: [] };
@@ -199,6 +200,7 @@ export async function init({ root: requestedRoot, src, images, config: configOpt
       : { path: file, created: false, diff: diff(file, item.before, item.text) });
   }
   if (!preview.summary.candidates) { report.files = []; return report; }
+  notes.push(...planned);
 
   if (apply) {
     // A file init creates must still be missing, and one it edits (app.json) unchanged since the plan.

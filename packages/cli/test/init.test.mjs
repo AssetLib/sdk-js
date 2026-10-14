@@ -342,3 +342,18 @@ test('the scene plugin follows the config file Expo reads and matches plugin ent
   assert.ok(!report.files.some(file => file.path === 'app.json'));
   assert.ok(report.notes.includes("Add './plugins/with-ios-scene-lifecycle' to the plugins in app.config.mts if it is not there yet."));
 });
+
+test('with nothing to adopt, init prints no note about the plugin or workflow it does not write', async t => {
+  for (const expo of ['~57.0.28', '~56.0.0']) {
+    const p = await project(t, { pkg: { ...expo57, dependencies: { expo } }, source: `import { Image } from 'react-native';\nexport const Icon = () => <Image source={require('../assets/app-icon.png')} />;\n` });
+    await p.put('app.config.ts', 'export default ({ config }) => config;\n');
+    for (const options of [[], ['--apply']]) {
+      const { code, report } = await p.run(options);
+      assert.equal(code, 3);
+      assert.deepEqual(report.files, []);
+      assert.deepEqual(report.notes, ['No public config: download it from Settings › Connect in the console and save it as assetlib.public.json, or rerun with --config.'], `expo ${expo} ${options.join(' ')}`);
+    }
+    assert.deepEqual(await p.files(), ['app.config.ts', ...original]);
+    assert.doesNotMatch((await p.run([], false)).stdout, /with-ios-scene-lifecycle|UIScene|repository variables/);
+  }
+});
