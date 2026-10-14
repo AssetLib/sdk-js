@@ -176,6 +176,18 @@ async function fetchBounded(fetcher: typeof fetch, url: string, maxBytes: number
 
 type State = { version: 1; highestSequence: number; history: SignedManifest[] };
 
+/** Iterative, so any depth JSON.parse accepted freezes without exhausting the stack. */
+function deepFreeze<T>(value: T): T {
+  const pending: unknown[] = [value];
+  while (pending.length) {
+    const item = pending.pop();
+    if (item === null || typeof item !== 'object') continue;
+    Object.freeze(item);
+    for (const child of Object.values(item)) pending.push(child);
+  }
+  return value;
+}
+
 /** Durable replay identity survives authorized route and signing-key changes. */
 export function storageNamespace(config: AssetlibConfig): string {
   return hashBytes(utf8ToBytes(JSON.stringify([new URL(config.manifestUrl).origin, config.orgId, config.appId, config.environment]))).slice(0, 32);
@@ -183,22 +195,30 @@ export function storageNamespace(config: AssetlibConfig): string {
 
 /** Use the same verification for normal state loads and legacy namespace migration. */
 export function verifyStoredState(serialized: string, config: AssetlibConfig): State {
+  return verifyStoredHistory(serialized, config).state;
+}
+
+function verifyStoredHistory(serialized: string, config: AssetlibConfig): { state: State; payloads: ManifestPayload[] } {
   if (utf8ToBytes(serialized).length > SDK_LIMITS.stateBytes) throw new Error('Stored SDK state exceeds its bound.');
   const state: unknown = JSON.parse(serialized);
   if (!record(state) || state.version !== 1 || !integer(state.highestSequence, 1, 2_147_483_647) || !Array.isArray(state.history) || state.history.length < 1 || state.history.length > SDK_LIMITS.retainedReleases) throw new Error('Stored SDK state is invalid.');
   let previous = state.highestSequence + 1;
+  const payloads: ManifestPayload[] = [];
   for (const [index, entry] of state.history.entries()) {
     const { payload } = verifySignedManifest(entry, config);
     if (payload.sequence >= previous) throw new Error('Stored release order is invalid.');
     if (index === 0 && payload.sequence !== state.highestSequence) throw new Error('Stored sequence does not match its signed manifest.');
     previous = payload.sequence;
+    payloads.push(payload);
   }
-  return state as State;
+  return { state: state as State, payloads };
 }
 
 export class AssetClient {
   readonly config: AssetlibConfig;
   private state: State = { version: 1, highestSequence: 0, history: [] };
+  private adoptedRaw: string | null = null;
+  private payloads: readonly ManifestPayload[] = [];
   private initialized = false;
   private storageFailure: string | null = null;
   private lastError: string | null = null;
@@ -262,14 +282,17 @@ export class AssetClient {
         if (this.state.highestSequence) throw new Error('Stored release state disappeared.');
         return;
       }
-      const next = verifyStoredState(raw, this.config);
+      // These exact bytes were already verified with this client's fixed config.
+      if (raw === this.adoptedRaw) return;
+      const { state: next, payloads } = verifyStoredHistory(raw, this.config);
       if (next.highestSequence < this.state.highestSequence) throw new Error('Stored release state moved backwards.');
-      const accepted = new Map(this.state.history.map(entry => [verifySignedManifest(entry, this.config).payload.sequence, entry.payload]));
-      for (const entry of next.history) {
-        const previous = accepted.get(verifySignedManifest(entry, this.config).payload.sequence);
+      const accepted = new Map(this.state.history.map((entry, index) => [this.payloads[index].sequence, entry.payload]));
+      for (const [index, entry] of next.history.entries()) {
+        const previous = accepted.get(payloads[index].sequence);
         if (previous !== undefined && previous !== entry.payload) throw new Error('Stored release state conflicts with an accepted release.');
       }
-      this.state = next;
+      const frozen = payloads.map(deepFreeze);
+      this.state = next; this.payloads = frozen; this.adoptedRaw = raw;
     } catch {
       this.storageFailure = 'Stored release state could not be verified. Using bundled assets; repair or explicitly reset app data before reconnecting.';
       this.lastError = this.storageFailure;
@@ -296,8 +319,10 @@ export class AssetClient {
         const next: State = { version: 1, highestSequence: payload.sequence, history: [envelope, ...this.state.history].slice(0, SDK_LIMITS.retainedReleases) };
         const serialized = JSON.stringify(next);
         if (utf8ToBytes(serialized).length > SDK_LIMITS.stateBytes) throw new Error('Release history exceeds the storage bound.');
+        const payloads = [deepFreeze(payload), ...this.payloads].slice(0, SDK_LIMITS.retainedReleases);
         await this.options.storage.saveState(serialized);
-        this.state = next;
+        // Nothing may throw between these: state, payloads and adoptedRaw describe one history.
+        this.state = next; this.payloads = payloads; this.adoptedRaw = serialized;
         this.lastError = null;
         return { updated: true, sequence: payload.sequence };
       } catch (error) {
@@ -310,7 +335,7 @@ export class AssetClient {
   }
   /** Only metadata transitions use the serial queue. Image transfers are bounded and concurrent. */
   private snapshot(): Promise<{ payload: ManifestPayload }[]> {
-    return this.serial(async () => { await this.load(); return this.storageFailure ? [] : this.state.history.map(entry => ({ payload: verifySignedManifest(entry, this.config).payload })); });
+    return this.serial(async () => { await this.load(); return this.storageFailure ? [] : this.payloads.map(payload => ({ payload })); });
   }
   private withTransfer<T>(work: () => Promise<T>, signal?: AbortSignal): Promise<T> {
     throwIfAborted(signal);
