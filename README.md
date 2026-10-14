@@ -13,7 +13,7 @@ Copy the public SDK configuration from the console into a demo’s **Connect** s
 | Package | What works in this preview |
 | --- | --- |
 | [`@assetlib/sdk-core`](packages/sdk-core) | Pinned Ed25519 manifest verification, SHA-256 image checks, durable sequence tracking, compatible cached fallback, local catalog code generation, signed PNG/WebP size selection, localized image descriptions |
-| [`@assetlib/sdk-expo`](packages/sdk-expo) | Expo 57 component, native file cache, web IndexedDB cache, `expo-image` rendering, browser-only opt-in SVG, per-usage accessibility modes |
+| [`@assetlib/sdk-expo`](packages/sdk-expo) | Expo SDK 54 to 57 component, native file cache, web IndexedDB cache, `expo-image` rendering, browser-only opt-in SVG, per-usage accessibility modes |
 | [`@assetlib/cli`](packages/cli) | `assetlib init` to set up an Expo app, `assetlib sync` build and catalog registration, `hash`, `check` for generated references, and the dry-run-first `adopt` codemod |
 | [`@assetlib/audit`](packages/audit) | Read-only PNG/JPEG/WebP inventory, duplicate evidence, dimension candidates, optional literal-reference hints |
 
@@ -36,7 +36,7 @@ npm install \
   https://github.com/AssetLib/sdk-js/releases/download/v0.7.2-preview.1/assetlib-sdk-expo-0.7.2-preview.1.tgz
 ```
 
-The preview targets Expo 57, React Native 0.86, and React 19. Pin the installed versions in your application's lockfile. Check `SHA256SUMS` attached to the release when reviewing downloaded artifacts. The `assetlib` CLI is `@assetlib/cli` 0.4.2, also attached to the release as `assetlib-cli-0.4.2.tgz`; see the [CLI install steps](packages/cli/README.md#install).
+The preview supports Expo SDK 54 to 57 (React Native 0.81 to 0.86) and React 19. Pin the installed versions in your application's lockfile. Check `SHA256SUMS` attached to the release when reviewing downloaded artifacts. The `assetlib` CLI is `@assetlib/cli` 0.4.2, also attached to the release as `assetlib-cli-0.4.2.tgz`; see the [CLI install steps](packages/cli/README.md#install).
 
 ## Connect one artwork placement
 

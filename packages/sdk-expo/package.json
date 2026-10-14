@@ -23,12 +23,12 @@
     "@assetlib/sdk-core": "0.7.2-preview.1"
   },
   "peerDependencies": {
-    "expo": ">=57 <58",
-    "expo-file-system": ">=57 <58",
-    "expo-image": ">=57 <58",
-    "expo-video": ">=57 <58",
+    "expo": ">=54 <58",
+    "expo-file-system": "^19.0.11 || >=55 <58",
+    "expo-image": "^3.0.7 || >=55 <58",
+    "expo-video": "^3.0.11 || >=55 <58",
     "react": ">=19 <20",
-    "react-native": ">=0.86 <0.87"
+    "react-native": ">=0.81 <0.87"
   },
   "peerDependenciesMeta": {
     "expo-video": {

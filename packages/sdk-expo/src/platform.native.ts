@@ -18,6 +18,14 @@ function exclusive<T>(key: string, fn: () => Promise<T>): Promise<T> {
   locks.set(key, next.catch(() => {}));
   return next;
 }
+// Expo 54 and 55 relocate synchronously, take no options and refuse an existing destination;
+// Expo 56 and later return a promise. Deleting the destination first works on all of them (Expo
+// 57's iOS `overwrite` does the same). State and install ID readers also accept the `.next`
+// source, so a crash between the two steps loses neither.
+async function replace(source: File, destination: File, mode: 'move' | 'copy' = 'move'): Promise<void> {
+  if (destination.exists) destination.delete();
+  await (mode === 'move' ? source.move(destination) : source.copy(destination));
+}
 function directories(config: AssetlibConfig) {
   const root = new Directory(Paths.document, 'assetlib-v1', namespace(config));
   const images = new Directory(root, 'images');
@@ -47,7 +55,7 @@ export function createPlatformStorage(config: AssetlibConfig): AssetStorage {
     // written. A crash at either step cannot make this look like a fresh install.
     const marker = new File(root, 'migration.complete');
     marker.create({ overwrite: true }); marker.write('1');
-    await next.move(new File(root, 'state.json'), { overwrite: true });
+    await replace(next, new File(root, 'state.json'));
   };
   const loadState = async () => {
     const { root, images } = directories(config);
@@ -75,7 +83,7 @@ export function createPlatformStorage(config: AssetlibConfig): AssetStorage {
     if (oldImages.exists) for (const entry of oldImages.list()) {
       if (!(entry instanceof File) || !/^[a-f0-9]{64}\.(webp|png)$/.test(entry.name) || entry.size > SDK_LIMITS.assetBytes || entry.size < 1) continue;
       if (count >= SDK_LIMITS.cacheEntries || bytes + entry.size > SDK_LIMITS.cacheBytes) continue;
-      await entry.copy(new File(images, entry.name), { overwrite: true });
+      await replace(entry, new File(images, entry.name), 'copy');
       count++; bytes += entry.size;
     }
     await writeState(root, selected.raw);
@@ -112,7 +120,7 @@ export function createPlatformStorage(config: AssetlibConfig): AssetStorage {
       if (!/^[a-f0-9]{32}$/.test(value)) throw new Error('Invalid random install ID.');
       const next = new File(root, `${name}.next`);
       next.create({ overwrite: true }); next.write(value);
-      await next.move(new File(root, `${name}.id`), { overwrite: true });
+      await replace(next, new File(root, `${name}.id`));
       return value;
     }),
     loadState: () => exclusive(scope, loadState),
@@ -152,7 +160,7 @@ export function createPlatformStorage(config: AssetlibConfig): AssetStorage {
       }
       const next = new File(images, `${hash}.next`);
       next.create({ overwrite: true }); next.write(bytes);
-      await next.move(new File(images, `${hash}.${extension}`), { overwrite: true });
+      await replace(next, new File(images, `${hash}.${extension}`));
     }),
     // The player opens clips from files, so the core returns this URI instead of clip bytes.
     getAssetFileUri: async (hash, mime) => {

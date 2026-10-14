@@ -1,8 +1,8 @@
 # @assetlib/sdk-expo
 
-Expo SDK 57 / React Native 0.86 image delivery adapter for `@assetlib/sdk-core`. One integration targets iOS, Android, and Expo web. This is a preview SDK, not separate Swift or Kotlin SDKs.
+Expo SDK 54 to 57 (React Native 0.81 to 0.86) image delivery adapter for `@assetlib/sdk-core`. One integration targets iOS, Android, and Expo web. This is a preview SDK, not separate Swift or Kotlin SDKs.
 
-Install **`@assetlib/sdk-core` and `@assetlib/sdk-expo` at the same exact version** as direct dependencies, from npm (`preview` dist-tag) or as the tarballs attached to the same GitHub release. The Expo package depends on that exact core version. The host app needs Expo 57, React 19, React Native 0.86, and matching `expo-file-system` and `expo-image` versions:
+Install **`@assetlib/sdk-core` and `@assetlib/sdk-expo` at the same exact version** as direct dependencies, from npm (`preview` dist-tag) or as the tarballs attached to the same GitHub release. The Expo package depends on that exact core version. The host app needs Expo SDK 54, 55, 56 or 57 with that SDK's React Native and React 19, and the `expo-file-system` and `expo-image` versions that SDK installs:
 
 ```sh
 npx expo install expo-file-system expo-image
@@ -251,4 +251,6 @@ Enabling telemetry changes the app's data collection behavior. Review Google Pla
 
 ## Validation
 
-`npm test` exercises component lifecycle behavior with a React test renderer and mocked platform boundaries, including state-family activation, pinned selection, cancellation, fallback, native no-file data URI generation, and `AssetlibVideo`'s reduced-motion, app-state, two-slot and failure handling against a simulated player. `npm run typecheck` checks against the current Expo 57 APIs. Core security and offline tests run in the sibling package. Actual iOS/Android runtime and web delivery checks must be reported separately; these tests and typechecking are not evidence of a native device run.
+`npm test` exercises component lifecycle behavior with a React test renderer and mocked platform boundaries, including state-family activation, pinned selection, cancellation, fallback, native no-file data URI generation, and `AssetlibVideo`'s reduced-motion, app-state, two-slot and failure handling against a simulated player. `npm run typecheck` checks against Expo 57. Core security and offline tests run in the sibling package. Actual iOS/Android runtime and web delivery checks must be reported separately; these tests and typechecking are not evidence of a native device run.
+
+Expo SDK 54 to 56, October 13, 2026: the source typechecked against the packages each SDK installs (Expo 54.0.0 and 54.0.37, 55.0.31, 56.0.23); only Expo 54 was also run. A new Expo SDK 54 app (React Native 0.81.5, expo-file-system 19.0.24, expo-image 3.0.11, expo-video 3.0.16) installed the packed packages without peer overrides and drew the public demo workspace's published images in a web export in Chrome 152, in a Release build on an iOS 27 Simulator and in a release build on an Android 16 emulator. Both native builds kept the verified cache after a restart, and on Android it restarted offline from that cache and drew the bundled images offline after its data was cleared. A new Expo SDK 57 app ran the same packed code in the same iOS Simulator and Android emulator release builds, including the replacement of an existing state file and cache entry and, on Android, an offline restart from the cache. Not checked: any runtime on Expo 55 or 56, offline runs on iOS, `AssetlibVideo` clip playback on Expo 54 to 56, and physical devices.

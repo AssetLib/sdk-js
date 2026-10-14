@@ -75,7 +75,12 @@ export class File {
   async text() { return globalThis.__assetlibAdapter.fileData.get(this.key); }
   create() { globalThis.__assetlibAdapter.fileData.set(this.key, ''); }
   write(value) { globalThis.__assetlibAdapter.fileData.set(this.key, value); }
-  async move(target) { const data = globalThis.__assetlibAdapter.fileData; data.set(target.key, data.get(this.key)); data.delete(this.key); }
+  async move(target, ...rest) {
+    const data = globalThis.__assetlibAdapter.fileData;
+    if (rest.length || data.has(target.key)) throw new Error('Expo 54 and 55 take one argument and refuse an existing destination');
+    data.set(target.key, data.get(this.key)); data.delete(this.key);
+  }
+  delete() { globalThis.__assetlibAdapter.fileData.delete(this.key); }
 }
 export class Directory {
   constructor(parent, name = '', child = '') {

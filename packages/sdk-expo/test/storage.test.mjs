@@ -23,6 +23,10 @@ await writeFile(path.join(temporary, 'fetch.mjs'), 'export const fetch = globalT
 await writeFile(path.join(temporary, 'filesystem.mjs'), `
 const key = parts => parts.map(part => part.uri ?? part).join('/').replace(/\\/+/g, '/');
 const data = () => globalThis.__assetlibStorage;
+const relocatable = (target, rest) => {
+  if (rest.length) throw new Error('Received ' + (rest.length + 1) + ' arguments, but 1 was expected');
+  if (data().files.has(target.uri)) throw new Error('Destination already exists');
+};
 export class File {
   constructor(...parts) { this.uri = key(parts); this.name = this.uri.split('/').at(-1); }
   get exists() { data().reads.push(this.uri); return data().files.has(this.uri); }
@@ -32,8 +36,9 @@ export class File {
   async bytes() { data().reads.push(this.uri); const value = data().files.get(this.uri); return typeof value === 'string' ? new TextEncoder().encode(value) : value.slice(); }
   create() { data().files.set(this.uri, ''); }
   write(value) { data().files.set(this.uri, typeof value === 'string' ? value : value.slice()); }
-  copy(target) { const value = data().files.get(this.uri); data().files.set(target.uri, typeof value === 'string' ? value : value.slice()); }
-  move(target) { this.copy(target); data().files.delete(this.uri); this.uri = target.uri; }
+  // Expo 54 and 55 semantics, the strictest supported: one argument, and an existing destination throws.
+  copy(target, ...rest) { relocatable(target, rest); const value = data().files.get(this.uri); data().files.set(target.uri, typeof value === 'string' ? value : value.slice()); }
+  move(target, ...rest) { this.copy(target, ...rest); data().files.delete(this.uri); this.uri = target.uri; }
   delete() { data().files.delete(this.uri); }
 }
 export class Directory {
