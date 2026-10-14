@@ -53,7 +53,10 @@ export function syncWorkflow({ console: origin, orgId, appId, srcDirectories, ap
   const references = srcDirectories.map(dir => ` --references '${dir}'`).join('');
   const version = appVersionFile === 'app.json' ? "require('./app.json').expo.version" : "require('./package.json').version";
   return `# Registers assetlib.catalog.json with Assetlib on every push to main (written by assetlib init).
-# Add the ASSETLIB_TOKEN repository secret: a token with the Declare scope from Settings > Tokens in the console.
+# Store ASSETLIB_TOKEN, a token with the Declare scope from Settings > Tokens in the console, as a secret of the
+# assetlib-sync environment with its deployment branches limited to main (GitHub Settings > Environments), not as a
+# repository or organization secret, so no other branch can read it. A private repository on GitHub Free has no
+# environments: use a repository secret there, which a branch whose workflow is edited to ask for it can read.
 name: Assetlib sync
 on:
   push:
@@ -62,9 +65,20 @@ on:
 permissions:
   contents: read
 jobs:
+  # GitHub compares expressions without regard to case, so the shell checks the exact ref.
+  branch_gate:
+    runs-on: ubuntu-latest
+    outputs:
+      allowed: \${{ steps.check.outputs.allowed }}
+    steps:
+      - id: check
+        run: |
+          if [ "$GITHUB_REF" = 'refs/heads/main' ]; then echo 'allowed=true' >> "$GITHUB_OUTPUT"; fi
   sync:
-    # Only main holds the token: a manual run from another branch is skipped.
-    if: github.ref == 'refs/heads/main'
+    # Only main runs this job: a manual run from any other branch is skipped.
+    needs: branch_gate
+    if: needs.branch_gate.outputs.allowed == 'true'
+    environment: assetlib-sync
     runs-on: ubuntu-latest
     steps:
       - uses: ${CHECKOUT}
@@ -154,7 +168,7 @@ export async function init({ root: requestedRoot, src, images, config: configOpt
   }
   report.next = [
     'Install @assetlib/sdk-core and @assetlib/sdk-expo at one exact version, and @assetlib/cli, from npm or from the same GitHub release as this CLI (see the CLI README). Never install the unscoped assetlib package.',
-    ...(ci === 'github' ? ['Add the ASSETLIB_TOKEN repository secret: a token with the Declare scope from Settings › Tokens. The first push to main then registers the placements.'] : ['Run assetlib sync in CI on every build (see the CLI README).']),
+    ...(ci === 'github' ? ['Store a token with the Declare scope from Settings › Tokens as the ASSETLIB_TOKEN secret of the assetlib-sync environment, with its deployment branches limited to main (GitHub Settings › Environments), or as a repository secret in a private repository on GitHub Free. The first push to main then registers the placements.'] : ['Run assetlib sync in CI on every build (see the CLI README).']),
     'Run a development build. Overview in the console ticks "Declare placements" after the first sync and "Connect your app" when the build first requests a manifest.',
     'Publish a change in the console and refresh the app: "Update an image without an app release" ticks when the app requests it.',
   ];

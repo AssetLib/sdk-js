@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { main } from '../src/cli.mjs';
@@ -74,8 +75,10 @@ test('init --apply writes the plan once and then refuses to run again', async t 
   assert.match(workflow, /node \.\/node_modules\/@assetlib\/cli\/bin\/assetlib\.mjs sync --catalog assetlib\.catalog\.json --platform expo/);
   assert.match(workflow, /--app-version "\$APP_VERSION" --build-number "\$BUILD_NUMBER" --references 'src'/);
   assert.match(workflow, /APP_VERSION="\$\(node -p "require\('\.\/app\.json'\)\.expo\.version"\)"/);
-  assert.match(workflow, /if: github\.ref == 'refs\/heads\/main'/);
-  assert.doesNotMatch(workflow, /GITHUB_OUTPUT|steps\.app/);
+  assert.match(workflow, /run: \|\n {10}if \[ "\$GITHUB_REF" = 'refs\/heads\/main' \]; then echo 'allowed=true' >> "\$GITHUB_OUTPUT"; fi\n/, 'the branch is compared in a shell, which is case-sensitive');
+  assert.match(workflow, / {2}sync:\n {4}# .*\n {4}needs: branch_gate\n {4}if: needs\.branch_gate\.outputs\.allowed == 'true'\n {4}environment: assetlib-sync\n/);
+  assert.doesNotMatch(workflow, /github\.ref|steps\.app/, 'no case-insensitive expression decides the branch');
+  assert.equal((workflow.match(/GITHUB_OUTPUT/g) ?? []).length, 1, 'only the constant gate output is written to $GITHUB_OUTPUT');
   assert.doesNotMatch(workflow, /npx|npm install|PUBLIC KEY/, 'the CLI runs from the installed package and no key is copied into CI');
   const again = await p.run([], false);
   assert.equal(again.code, 1);
@@ -170,6 +173,19 @@ test('the workflow keeps the token to one step: pinned actions, no stored creden
   const scripts = [...workflow.matchAll(/run: \|\n((?: {10}.*\n?)+)|run: (.*)/g)].map(match => match[1] ?? match[2]);
   assert.ok(scripts.length >= 2);
   for (const script of scripts) assert.doesNotMatch(script, /\$\{\{/, 'no GitHub expression is expanded inside a shell script');
+});
+
+test('the branch gate lets only refs/heads/main through, compared with case', async t => {
+  const workflow = syncWorkflow({ console: 'https://console.example.com', orgId: org, appId: app, srcDirectories: ['src'], appVersionFile: 'app.json' });
+  const gate = workflow.match(/\n {2}branch_gate:\n[^]*?run: \|\n {10}(.*)\n {2}sync:\n/)[1];
+  const dir = await mkdtemp(path.join(tmpdir(), 'assetlib-gate-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const output = path.join(dir, 'output');
+  for (const [ref, allowed] of [['refs/heads/main', true], ['refs/heads/Main', false], ['refs/heads/MAIN', false], ['refs/heads/main-2', false], ['refs/heads/feature/main', false], ['refs/tags/main', false], ['refs/pull/1/merge', false]]) {
+    await writeFile(output, '');
+    execFileSync('bash', ['--noprofile', '--norc', '-e', '-c', gate], { env: { GITHUB_REF: ref, GITHUB_OUTPUT: output } });
+    assert.equal(await readFile(output, 'utf8'), allowed ? 'allowed=true\n' : '', ref);
+  }
 });
 
 test('init refuses source folders it cannot quote safely and never writes through a symlink', async t => {
