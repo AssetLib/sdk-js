@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.5-preview.1 — October 13, 2026
+
+- `@assetlib/cli` 0.4.4: when `init` has nothing to set up (exit 3, no file written), it no longer prints the Expo SDK 57 scene plugin notes, which told the app to register a plugin file `init` never wrote, or the note about the sync workflow reading repository variables. Notes about files `init` would write appear only when it sets something up. Found by the website review of 0.7.4; checked with a new `init` test (Expo 57 and 56 apps with `app.config.ts` and nothing adoptable, dry run and `--apply`) that fails on 0.4.3, `npm run verify`, and one independent review.
+- `@assetlib/sdk-core` and `@assetlib/sdk-expo` change only their version. `@assetlib/audit` 0.2.1 is unchanged.
+
 ## 0.7.4-preview.1 — October 13, 2026
 
 - `@assetlib/cli` 0.4.3: the starter client that `init` and `adopt` write now checks for a new release. It calls `refresh()` when it loads, which queues the check before any image resolves, and again whenever the app returns to the foreground. An image already on screen shows a new release the next time it mounts, so publishing a change and then reloading or reopening the app shows it. Before, the stub never refreshed, so apps kept their bundled images, and it threw at load on the HTTP loopback config `init` accepts; it now accepts a loopback console only in development builds (`__DEV__`). It binds `client` internally whatever `--client-import` export name is chosen (`#state` used to shadow it), and keeps one foreground listener when Fast Refresh runs it again. Existing client modules are never rewritten: a stub written by an earlier CLI should call `client.refresh()` the same way (see the CLI README).
