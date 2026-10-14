@@ -227,3 +227,118 @@ test('syncWorkflow rejects values that could escape their quotes', () => {
   ]) assert.throws(() => syncWorkflow({ ...ok, ...change }), message);
   assert.match(syncWorkflow({ ...ok, srcDirectories: ['.', 'app/screens'] }), /--references '\.' --references 'app\/screens'/);
 });
+
+const expo57 = { name: 'demo', version: '1.0.0', dependencies: { expo: '~57.0.28' } };
+// The parts of the Expo SDK 57 template's AppDelegate.swift that the plugin changes.
+const TEMPLATE_APP_DELEGATE = `internal import Expo
+import React
+
+@main
+class AppDelegate: ExpoAppDelegate {
+  var window: UIWindow?
+
+  public override func application(
+    _ application: UIApplication,
+    didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
+  ) -> Bool {
+    let factory = ExpoReactNativeFactory(delegate: delegate)
+
+#if os(iOS) || os(tvOS)
+    window = UIWindow(frame: UIScreen.main.bounds)
+    factory.startReactNative(
+      withModuleName: "main",
+      in: window,
+      launchOptions: launchOptions)
+#endif
+
+    return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+  }
+}
+`;
+function loadScenePlugin(source) {
+  const module = { exports: {} }, calls = [];
+  const configPlugins = {
+    withAppDelegate: (config, mod) => { config.appDelegate = mod({ modResults: { language: 'swift', contents: TEMPLATE_APP_DELEGATE } }).modResults.contents; return config; },
+    withInfoPlist: (config, mod) => { config.infoPlist = mod({ modResults: {} }).modResults; return config; },
+    IOSConfig: { XcodeProjectFile: { withBuildSourceFile: (config, options) => { calls.push(options); return config; } } },
+  };
+  new Function('require', 'module', 'exports', source)(name => { assert.equal(name, 'expo/config-plugins'); return configPlugins; }, module, module.exports);
+  return { plugin: module.exports, calls };
+}
+
+test('on Expo SDK 57, init writes the scene life cycle plugin and registers it in app.json', async t => {
+  const p = await project(t, { pkg: expo57 });
+  await p.put('app.json', JSON.stringify({ expo: { name: 'Demo', version: '1.2.0', plugins: ['expo-image'] } }, null, 2) + '\n');
+  const dry = await p.run(['--config', p.configFile]);
+  assert.equal(dry.report.files.find(file => file.path === 'app.json').created, false);
+  assert.match(dry.report.files.find(file => file.path === 'app.json').diff, /^--- a\/app\.json\n\+\+\+ b\/app\.json\n[^]*^- {6}"expo-image"\n\+ {6}"expo-image",\n\+ {6}"\.\/plugins\/with-ios-scene-lifecycle"\n/m);
+  assert.ok(dry.report.notes.some(note => note.includes('UIScene life cycle')));
+  assert.equal(JSON.parse(await p.get('app.json')).expo.plugins.length, 1, 'a dry run writes nothing');
+  assert.equal((await p.run(['--config', p.configFile, '--apply'])).code, 0);
+  assert.deepEqual(JSON.parse(await p.get('app.json')), { expo: { name: 'Demo', version: '1.2.0', plugins: ['expo-image', './plugins/with-ios-scene-lifecycle'] } });
+  assert.ok((await p.get('app.json')).endsWith('}\n'));
+  const { plugin, calls } = loadScenePlugin(await p.get('plugins/with-ios-scene-lifecycle.js'));
+  const config = plugin({ sdkVersion: '57.0.0' });
+  assert.match(config.appDelegate, /class AppDelegate: ExpoAppDelegate, ExpoReactNativeFactoryProvider \{/);
+  assert.doesNotMatch(config.appDelegate, /UIWindow\(frame:|startReactNative/);
+  assert.equal(plugin.adoptSceneAppDelegate(config.appDelegate), config.appDelegate, 'applying it twice changes nothing');
+  assert.equal(config.infoPlist.UIApplicationSceneManifest.UISceneConfigurations.UIWindowSceneSessionRoleApplication[0].UISceneDelegateClassName, '$(PRODUCT_MODULE_NAME).SceneDelegate');
+  assert.deepEqual(calls.map(call => [call.filePath, call.overwrite]), [['SceneDelegate.swift', false]]);
+  assert.match(calls[0].contents, /^internal import Expo\n\n@objc\(SceneDelegate\)\nclass SceneDelegate: ExpoAppSceneDelegate \{\n/);
+  assert.deepEqual(plugin({ sdkVersion: '58.0.0' }), { sdkVersion: '58.0.0' }, 'SDK 58 templates already adopt scenes');
+  assert.throws(() => plugin.adoptSceneAppDelegate('class AppDelegate: UIResponder {'), /not the Expo SDK 57 template's/);
+});
+
+test('the scene plugin is skipped before SDK 57, noted for a dynamic config, and left alone when present', async t => {
+  const older = await project(t);
+  assert.ok(!(await older.run(['--config', older.configFile])).report.files.some(file => file.path.startsWith('plugins/') || file.path === 'app.json'));
+  const dynamic = await project(t, { pkg: expo57 });
+  await dynamic.put('app.config.ts', 'export default ({ config }) => config;\n');
+  await dynamic.put('ios/Podfile', '');
+  const { report } = await dynamic.run(['--config', dynamic.configFile]);
+  assert.ok(report.files.some(file => file.path === 'plugins/with-ios-scene-lifecycle.js'));
+  assert.ok(!report.files.some(file => file.path === 'app.json'), 'app.json is not edited when app.config.ts decides the config');
+  assert.ok(report.notes.includes("Add './plugins/with-ios-scene-lifecycle' to the plugins in app.config.ts if it is not there yet."));
+  assert.ok(report.notes.some(note => note.includes('npx expo prebuild --clean --platform ios')));
+  const present = await project(t, { pkg: expo57 });
+  await present.put('plugins/with-ios-scene-lifecycle.js', '// mine\n');
+  await present.put('app.json', JSON.stringify({ expo: { version: '1.2.0', plugins: ['./plugins/with-ios-scene-lifecycle'] } }));
+  const kept = (await present.run(['--config', present.configFile])).report;
+  assert.ok(!kept.files.some(file => file.path === 'app.json' || file.path.startsWith('plugins/')));
+  assert.ok(kept.notes.includes('plugins/with-ios-scene-lifecycle.js already exists and was left unchanged.'));
+  const scenes = await project(t, { pkg: expo57 });
+  await scenes.put('app.json', JSON.stringify({ expo: { version: '1.2.0', ios: { infoPlist: { UIApplicationSceneManifest: {} } } } }));
+  const adopted = (await scenes.run(['--config', scenes.configFile])).report;
+  assert.ok(!adopted.files.some(file => file.path === 'app.json' || file.path.startsWith('plugins/')));
+  assert.ok(!adopted.notes.some(note => note.includes('UIScene')));
+});
+
+test('the scene plugin follows the config file Expo reads and matches plugin entries exactly', async t => {
+  for (const range of ['57', '~57', '^57', '57.0.28']) {
+    const p = await project(t, { pkg: { ...expo57, dependencies: { expo: range } } });
+    assert.ok((await p.run(['--config', p.configFile])).report.files.some(file => file.path === 'plugins/with-ios-scene-lifecycle.js'), `expo ${range}`);
+  }
+  for (const range of ['~54.0.0', '^55.0.0', '56']) {
+    const p = await project(t, { pkg: { ...expo57, dependencies: { expo: range } } });
+    const { report } = await p.run(['--config', p.configFile]);
+    assert.ok(!report.files.some(file => file.path.startsWith('plugins/') || file.path === 'app.json'), `expo ${range}`);
+    assert.ok(report.notes.some(note => note.startsWith('Expo SDK 54 to 56 iOS templates do not adopt the UIScene life cycle')), `expo ${range}`);
+  }
+  const flat = await project(t, { pkg: expo57 });
+  await flat.put('app.json', JSON.stringify({ name: 'Demo', version: '1.2.0', plugins: ['./plugins/with-ios-scene-lifecycle-old'] }));
+  assert.equal((await flat.run(['--config', flat.configFile, '--apply'])).code, 0);
+  assert.deepEqual(JSON.parse(await flat.get('app.json')).plugins, ['./plugins/with-ios-scene-lifecycle-old', './plugins/with-ios-scene-lifecycle'], 'a flat app.json gets the plugin at its root; a similar name is not a match');
+  const tuple = await project(t, { pkg: expo57 });
+  await tuple.put('app.json', JSON.stringify({ expo: { version: '1.2.0', plugins: [['./plugins/with-ios-scene-lifecycle.js', {}]] } }));
+  assert.ok(!(await tuple.run(['--config', tuple.configFile])).report.files.some(file => file.path === 'app.json'), 'a registered plugin with options is left alone');
+  const json = await project(t, { pkg: expo57 });
+  await json.put('app.config.json', JSON.stringify({ expo: { name: 'Demo' } }, null, '\t') + '\n');
+  assert.equal((await json.run(['--config', json.configFile, '--apply'])).code, 0);
+  assert.equal(await json.get('app.config.json'), JSON.stringify({ expo: { name: 'Demo', plugins: ['./plugins/with-ios-scene-lifecycle'] } }, null, '\t') + '\n', 'app.config.json, which Expo reads before app.json, keeps its tab indentation');
+  assert.deepEqual(JSON.parse(await json.get('app.json')), { expo: { name: 'Demo', version: '1.2.0' } }, 'app.json is not the config Expo reads');
+  const mts = await project(t, { pkg: expo57 });
+  await mts.put('app.config.mts', 'export default { plugins: [] };\n');
+  const { report } = await mts.run(['--config', mts.configFile]);
+  assert.ok(!report.files.some(file => file.path === 'app.json'));
+  assert.ok(report.notes.includes("Add './plugins/with-ios-scene-lifecycle' to the plugins in app.config.mts if it is not there yet."));
+});

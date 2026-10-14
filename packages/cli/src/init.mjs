@@ -1,6 +1,7 @@
 import { lstat, mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { adopt, safeDestination } from './adopt.mjs';
+import { adopt, diff, safeDestination } from './adopt.mjs';
+import { SCENE_PLUGIN, SCENE_PLUGIN_FILE, SCENE_PLUGIN_SOURCE } from './scene-plugin.mjs';
 
 const UUID = /^[a-fA-F0-9]{8}-(?:[a-fA-F0-9]{4}-){3}[a-fA-F0-9]{12}$/;
 const slash = value => value.split(path.sep).join('/');
@@ -103,6 +104,36 @@ jobs:
 `;
 }
 
+/* Expo SDK 57's iOS template does not adopt the UIScene life cycle, which apps built with Xcode 27 need at launch.
+   Plan the plugin that adopts it and its entry in the static app config; a dynamic app config gets a note instead. */
+async function scenePlugin(root, writable, notes) {
+  // Expo reads the first dynamic config in this order, else app.config.json, else app.json (with or without an expo key).
+  let dynamic = null, staticName = null;
+  for (const ext of ['ts', 'mts', 'cts', 'mjs', 'cjs', 'js']) if (await exists(path.join(root, `app.config.${ext}`))) { dynamic = `app.config.${ext}`; break; }
+  for (const name of ['app.config.json', 'app.json']) if (await exists(path.join(root, name))) { staticName = name; break; }
+  const staticFile = staticName && path.join(root, staticName);
+  const app = staticFile ? await readJson(staticFile, 1024 * 1024, staticName).catch(() => null) : null;
+  const record = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+  const expo = record(app?.value) ? (record(app.value.expo) ? app.value.expo : app.value) : null;
+  if (expo?.ios?.infoPlist?.UIApplicationSceneManifest) return [];
+  const items = [], file = path.join(root, SCENE_PLUGIN_FILE);
+  await writable(file);
+  if (await exists(file)) notes.push(`${SCENE_PLUGIN_FILE} already exists and was left unchanged.`);
+  else items.push({ file, text: SCENE_PLUGIN_SOURCE });
+  notes.push(`Expo SDK 57 apps built with Xcode 27 stop at launch on iOS 27 until they adopt the UIScene life cycle. ${SCENE_PLUGIN_FILE} applies the Expo SDK 58 template's scene setup when Expo generates ios/, and does nothing on SDK 58 or later.`);
+  const registered = Array.isArray(expo?.plugins) && expo.plugins.some(entry => [SCENE_PLUGIN, `${SCENE_PLUGIN}.js`].includes(Array.isArray(entry) ? entry[0] : entry));
+  const editable = !dynamic && expo && (expo.plugins === undefined || Array.isArray(expo.plugins)) && await writable(staticFile).then(() => true, () => false);
+  if (dynamic) notes.push(`Add '${SCENE_PLUGIN}' to the plugins in ${dynamic} if it is not there yet.`);
+  else if (registered) { /* Already registered. */ }
+  else if (editable) {
+    const next = structuredClone(app.value), target = record(next.expo) ? next.expo : next;
+    target.plugins = [...(expo.plugins ?? []), SCENE_PLUGIN];
+    items.push({ file: staticFile, before: app.text, text: JSON.stringify(next, null, /^[ \t]+(?=")/m.exec(app.text)?.[0] ?? 2) + (app.text.endsWith('\n') ? '\n' : '') });
+  } else notes.push(`Add '${SCENE_PLUGIN}' to the plugins in ${staticName ?? 'your app config'}.`);
+  if (await exists(path.join(root, 'ios'))) notes.push(`Expo applies config plugins only when it generates ios/. If this app's ios/ folder is generated, run npx expo prebuild --clean --platform ios before the next build; if you maintain it by hand, make the plugin's three changes there yourself.`);
+  return items;
+}
+
 /** Set up an Expo app: adopt its bundled images into a new catalog, save the public config, and add a sync workflow.
     A dry run unless `apply`; writes nothing if no image can be adopted. Never calls Git or the network. */
 export async function init({ root: requestedRoot, src, images, config: configOption, generated, clientImport, minEdge = 64, ci = 'github', apply = false }) {
@@ -153,24 +184,38 @@ export async function init({ root: requestedRoot, src, images, config: configOpt
     }
   }
 
+  if (/^[\^~]?57(?:\.|$)/.test(dependencies.expo)) extras.push(...await scenePlugin(root, writable, notes));
+  else if (/^[\^~]?5[4-6](?:\.|$)/.test(dependencies.expo)) notes.push('Expo SDK 54 to 56 iOS templates do not adopt the UIScene life cycle, which apps built with Xcode 27 need to launch on iOS 27, and expo before 57 has no ExpoAppSceneDelegate to adopt it with. Build iOS with Xcode 26, or move to Expo SDK 57, where init adds a plugin for it.');
+
   // Plan the adoption first: it decides whether there is anything to set up at all.
   const empty = { schemaVersion: 1, placements: [] };
   const options = { catalogPath, catalog: empty, src: sourceDirs, generated: generated && inProject(generated), clientImport, minEdge, images: images?.map(inProject), createCatalog: true };
   const preview = await adopt({ ...options, apply: false });
   const report = { mode: apply ? 'apply' : 'dry-run', adoption: preview, files: [...preview.files], notes };
-  for (const item of extras) report.files.push({ path: slash(path.relative(root, item.file)), created: true, diff: `--- /dev/null\n+++ b/${slash(path.relative(root, item.file))}\n` + item.text.split('\n').filter((line, index, all) => index < all.length - 1 || line).map(line => '+' + line).join('\n') + '\n' });
+  for (const item of extras) {
+    const file = slash(path.relative(root, item.file));
+    report.files.push(item.before === undefined
+      ? { path: file, created: true, diff: `--- /dev/null\n+++ b/${file}\n` + item.text.split('\n').filter((line, index, all) => index < all.length - 1 || line).map(line => '+' + line).join('\n') + '\n' }
+      : { path: file, created: false, diff: diff(file, item.before, item.text) });
+  }
   if (!preview.summary.candidates) { report.files = []; return report; }
 
   if (apply) {
-    for (const item of extras) { await writable(item.file); if (await exists(item.file)) throw new Error(`${slash(path.relative(root, item.file))} appeared during init; rerun the command.`); }
+    // A file init creates must still be missing, and one it edits (app.json) unchanged since the plan.
+    const changed = async item => item.before === undefined ? exists(item.file) : (await readFile(item.file, 'utf8').catch(() => null)) !== item.before;
+    for (const item of extras) { await writable(item.file); if (await changed(item)) throw new Error(`${slash(path.relative(root, item.file))} ${item.before === undefined ? 'appeared' : 'changed'} during init; rerun the command.`); }
     report.adoption = await adopt({ ...options, apply: true });
-    for (const item of extras) { await mkdir(path.dirname(item.file), { recursive: true }); await writable(item.file); await writeFile(item.file, item.text, { flag: 'wx' }); }
+    for (const item of extras) {
+      await mkdir(path.dirname(item.file), { recursive: true }); await writable(item.file);
+      if (item.before === undefined) await writeFile(item.file, item.text, { flag: 'wx' });
+      else { if (await changed(item)) throw new Error(`${slash(path.relative(root, item.file))} changed during init; review it and add the plugin by hand.`); await writeFile(item.file, item.text); }
+    }
   }
   report.next = [
     'Install @assetlib/sdk-core and @assetlib/sdk-expo at one exact version, and @assetlib/cli, from npm or from the same GitHub release as this CLI (see the CLI README). Never install the unscoped assetlib package.',
     ...(ci === 'github' ? ['Store a token with the Declare scope from Settings › Tokens as the ASSETLIB_TOKEN secret of the assetlib-sync environment, with its deployment branches limited to main (GitHub Settings › Environments), or as a repository secret in a private repository on GitHub Free. The first push to main then registers the placements.'] : ['Run assetlib sync in CI on every build (see the CLI README).']),
     'Run a development build. Overview in the console ticks "Declare placements" after the first sync and "Connect your app" when the build first requests a manifest.',
-    'Publish a change in the console and refresh the app: "Update an image without an app release" ticks when the app requests it.',
+    'Publish a change in the console, then reload the app or quit and reopen it. The starter client checks for a new release at launch and whenever the app returns to the foreground, and an image already on screen shows it the next time it mounts. "Update an image without an app release" ticks when the app requests the release.',
   ];
   return report;
 }

@@ -167,9 +167,13 @@ test('apply preserves attributes, declarations, imports and directives, regenera
   assert.equal(await f.get('src/assets.generated.ts'), generateCatalog(catalog));
   const client = await f.get('src/assetlib/client.ts');
   assert.match(client, /import \{ createExpoAssetClient \} from '@assetlib\/sdk-expo'/);
-  assert.match(client, /import \{ parsePublicConfig \} from '@assetlib\/sdk-core'/);
-  assert.match(client, /require\("\.\.\/\.\.\/assetlib.public.json"\)/);
-  assert.match(client, /export const client = createExpoAssetClient\(config\);/); syntax(client);
+  assert.match(client, /export const client = createExpoAssetClient\(require\("\.\.\/\.\.\/assetlib.public.json"\), \{ allowInsecureLoopback: __DEV__ \}\);/, 'only development builds accept a local http console');
+  const run = runStub(client);
+  assert.equal(run.refreshes(), 1, 'the client checks for a release when it loads');
+  run.emit('background'); run.emit('active');
+  assert.equal(run.refreshes(), 2, 'and again when the app returns to the foreground');
+  assert.deepEqual(run.options, { allowInsecureLoopback: true });
+  syntax(client);
   const before = await snapshot(f.root), second = await f.run(['--apply']);
   assert.equal(second.code, 3); assert.equal(second.report.summary.candidates, 0); assert.equal(second.report.files.length, 0);
   assert.deepEqual(await snapshot(f.root), before);
@@ -283,6 +287,50 @@ test('reuses matching catalog keys and original symbols while skipping dimension
   assert.equal(result.report.skipped[0].reason, 'catalog-dimension-conflict');
   assert.deepEqual(JSON.parse(await f.get('assetlib.catalog.json')), original);
   assert.match(await f.get('src/Lab.js'), /asset=\{AppAssets.Custom.saved\}/);
+});
+
+/* Runs a starter client as Metro would after Babel: TypeScript stripped, CommonJS, `__DEV__` defined. Running it again
+   on the same globals is what Fast Refresh does. */
+function runStub(text, globals = {}) {
+  const js = ts.transpileModule(text, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+  const listeners = new Set(), state = { refreshes: 0, options: null };
+  const reactNative = { AppState: { addEventListener(type, listener) { assert.equal(type, 'change'); listeners.add(listener); return { remove: () => listeners.delete(listener) }; } } };
+  const sdk = { createExpoAssetClient(config, options) { assert.equal(config.schemaVersion, 1); state.options = options; return { refresh: async () => { state.refreshes++; return { updated: false, sequence: 0 }; } }; } };
+  const load = () => {
+    const module = { exports: {} };
+    new Function('require', 'module', 'exports', 'globalThis', '__DEV__', js)(name => name === 'react-native' ? reactNative : name === '@assetlib/sdk-expo' ? sdk : { schemaVersion: 1 }, module, module.exports, globals, true);
+    return module.exports;
+  };
+  const exports = load();
+  return { exports, load, get options() { return state.options; }, refreshes: () => state.refreshes, listeners: () => listeners.size, emit: value => { for (const listener of [...listeners]) listener(value); } };
+}
+
+test('the starter client keeps its own binding whatever the export is called, and one foreground listener', async t => {
+  for (const name of ['state', 'AppState', '__DEV__', 'createExpoAssetClient']) {
+    const f = await fixture(t);
+    await f.put('src/TravelScreen.tsx', `import { Image } from 'react-native';\nexport const Travel = () => <Image source={require('../assets/coast-hero.png')} />;\n`);
+    assert.equal((await f.run(['--apply', '--client-import', `./src/assetlib/client#${name}`])).code, 0);
+    const client = await f.get('src/assetlib/client.ts');
+    assert.match(client, new RegExp(`\\nexport \\{ client as ${name.replace(/\$/g, '\\$')} \\};\\n`)); syntax(client);
+    const run = runStub(client);
+    assert.equal(typeof run.exports[name].refresh, 'function');
+    run.emit('active');
+    assert.equal(run.refreshes(), 2, `#${name}: the foreground listener refreshes the client`);
+    run.load();
+    assert.equal(run.listeners(), 1, `#${name}: running the module again replaces its listener`);
+  }
+});
+
+test('the starter client typechecks against the Expo adapter, also as a default export', async t => {
+  const f = await fixture(t);
+  await f.put('src/TravelScreen.tsx', `import { Image } from 'react-native';\nexport const Travel = () => <Image source={require('../assets/coast-hero.png')} />;\n`);
+  const result = await f.run(['--apply', '--client-import', './src/assetlib/client#default']);
+  assert.equal(result.code, 0, result.stdout);
+  const client = await f.get('src/assetlib/client.ts');
+  assert.match(client, /\nconst client = createExpoAssetClient\(/);
+  assert.match(client, /\nexport default client;\n/);
+  assert.match(await f.get('src/TravelScreen.tsx'), /import client from "\.\/assetlib\/client";/);
+  await typecheckTransformed(f, 'src/assetlib/client.ts');
 });
 
 test('supports JSX in ts and js, overlapping source roots, custom generated path, and existing client without rewriting it', async t => {

@@ -237,7 +237,7 @@ function editSource(info, candidates, generated, clientModule, clientExport) {
 }
 
 // One bounded unified hunk between the first and last changes; unchanged outer lines stay out of the report.
-function diff(file, before, after) {
+export function diff(file, before, after) {
   const split = text => {
     const lines = text.split('\n');
     if (lines.at(-1) === '') lines.pop();
@@ -382,7 +382,26 @@ export async function adopt({ catalogPath, catalog, src, generated: generatedOpt
     await plan(generated, generatedText);
     if (localClient && !clientExists) {
       const configModule = relativeImport(clientFile, path.join(root, 'assetlib.public.json'));
-      await plan(clientFile, `// Review this starter client before running the app.\n// Download the app's public SDK config to assetlib.public.json; never put API tokens here.\nimport { createExpoAssetClient } from '@assetlib/sdk-expo';\nimport { parsePublicConfig } from '@assetlib/sdk-core';\n\nconst config = parsePublicConfig(require(${quote(configModule)}));\n${clientExport === 'default' ? 'export default' : 'export const ' + clientExport + ' ='} createExpoAssetClient(config);\n`);
+      await plan(clientFile, [
+        '// Review this starter client before running the app.',
+        "// Download the app's public SDK config to assetlib.public.json; never put API tokens here.",
+        "import { AppState } from 'react-native';",
+        "import { createExpoAssetClient } from '@assetlib/sdk-expo';",
+        '',
+        '// Development builds accept a config for a local console on http://localhost; release builds require HTTPS.',
+        `${clientExport === 'client' ? 'export ' : ''}const client = createExpoAssetClient(require(${quote(configModule)}), { allowInsecureLoopback: __DEV__ });`,
+        ...(clientExport === 'client' ? [] : [clientExport === 'default' ? 'export default client;' : `export { client as ${clientExport} };`]),
+        '',
+        '// Check for a new release at launch, before images resolve, and whenever the app returns to the foreground.',
+        '// An image already on screen keeps its artwork until it mounts again. To redraw it sooner, call client.refresh()',
+        '// in your screen and pass AssetlibImage revision={result.sequence}: these checks may already have applied the',
+        '// release, so `updated` can be false.',
+        'void client.refresh();',
+        '// Fast Refresh can run this file again, so replace the previous listener instead of adding another.',
+        "Reflect.get(globalThis, '__assetlibForeground')?.remove();",
+        "Reflect.set(globalThis, '__assetlibForeground', AppState.addEventListener('change', state => { if (state === 'active') void client.refresh(); }));",
+        '',
+      ].join('\n'));
       report.notes.push(`${apply ? 'Created' : 'Would create'} client stub: ${slash(path.relative(root, clientFile))}. Review the public config before running the app.`);
     }
     // Coding agents read AGENTS.md (Claude Code reads CLAUDE.md), so they learn to use placements instead of exporting art.
