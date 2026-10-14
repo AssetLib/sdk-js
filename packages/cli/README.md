@@ -4,16 +4,16 @@ Set up an Expo app's integration, register a checked-in Assetlib catalog with th
 
 ## Install
 
-The CLI is on npm as `@assetlib/cli`, a developer preview under the `preview` dist-tag. Install an exact version; release `v0.7.1-preview.1` ships 0.4.1:
+The CLI is on npm as `@assetlib/cli`, a developer preview under the `preview` dist-tag. Install an exact version; release `v0.7.2-preview.1` ships 0.4.2:
 
 ```sh
-npm install --save-dev --save-exact @assetlib/cli@0.4.1
+npm install --save-dev --save-exact @assetlib/cli@0.4.2
 node ./node_modules/@assetlib/cli/bin/assetlib.mjs --help
 ```
 
 Run the installed package's own entry file, as above, and commit the lockfile so `npm ci` checks the package's hash. The unscoped `assetlib` name on npm is not ours: never install it or `npx` it by name, because that would fetch whatever package holds the name and run it beside `ASSETLIB_TOKEN`. The `assetlib` commands below assume this entry file (or an npm script that calls it).
 
-The same package is attached to the GitHub release as a tarball: `npm install --save-dev https://github.com/AssetLib/sdk-js/releases/download/v0.7.1-preview.1/assetlib-cli-0.4.1.tgz` installs it from there; check it against the release's `SHA256SUMS`. From a checkout of this repository, after `npm ci`, run it directly:
+The same package is attached to the GitHub release as a tarball: `npm install --save-dev https://github.com/AssetLib/sdk-js/releases/download/v0.7.2-preview.1/assetlib-cli-0.4.2.tgz` installs it from there; check it against the release's `SHA256SUMS`. From a checkout of this repository, after `npm ci`, run it directly:
 
 ```sh
 node packages/cli/bin/assetlib.mjs --help
@@ -36,6 +36,36 @@ node ./node_modules/@assetlib/cli/bin/assetlib.mjs init --config ~/Downloads/ass
 - Like `adopt`, it adds the [section for coding agents](#instructions-for-coding-agents) to `AGENTS.md`, the one existing file besides the adopted call sites that it may change.
 - It refuses to run when `assetlib.catalog.json` already exists (use `adopt`), needs `expo` in `package.json`, never writes through a symlink or outside the project, and, like `adopt`, never calls Git or the network.
 - It ends with the next steps: install the SDK packages from the same release, add the token secret, run a development build, and publish a change. Overview in the console ticks its setup checklist as the first sync, the first manifest request and the first update arrive.
+
+### Workflows written before CLI 0.4.2
+
+`init` never changes an existing workflow, and it refuses an app that already has a catalog. A workflow written by CLI 0.4.1 or earlier lets a manual run from any branch reach `ASSETLIB_TOKEN`, and writes the app version to `$GITHUB_OUTPUT`, where a version containing a newline can add step outputs. Update it by hand: add the `branch_gate` job, give `sync` the `needs`, `if` and `environment` lines, delete the "Read the app version" step and the `APP_VERSION` entry in the sync step's `env`, read the version at the top of that step's script (`require('./package.json').version` if your version is in `package.json`), and move the token into the `assetlib-sync` environment as described above. Leave the other lines as they are.
+
+```yaml
+jobs:
+  branch_gate:
+    runs-on: ubuntu-latest
+    outputs:
+      allowed: ${{ steps.check.outputs.allowed }}
+    steps:
+      - id: check
+        run: |
+          if [ "$GITHUB_REF" = 'refs/heads/main' ]; then echo 'allowed=true' >> "$GITHUB_OUTPUT"; fi
+  sync:
+    needs: branch_gate
+    if: needs.branch_gate.outputs.allowed == 'true'
+    environment: assetlib-sync
+    runs-on: ubuntu-latest
+    steps:
+      # checkout, setup-node and npm ci --ignore-scripts are unchanged
+      - name: Register placements
+        env:
+          # ASSETLIB_TOKEN, ASSETLIB_CONSOLE, ASSETLIB_ORG, ASSETLIB_APP and BUILD_NUMBER are unchanged; APP_VERSION is gone
+        run: |
+          APP_VERSION="$(node -p "require('./app.json').expo.version")"
+          node ./node_modules/@assetlib/cli/bin/assetlib.mjs sync --catalog assetlib.catalog.json --platform expo \
+            --app-version "$APP_VERSION" --build-number "$BUILD_NUMBER" --references 'src'
+```
 
 ## Commands
 

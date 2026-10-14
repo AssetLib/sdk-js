@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.2-preview.1 — October 13, 2026
+
+- `@assetlib/cli` 0.4.2, security: the GitHub workflow `assetlib init` writes (`.github/workflows/assetlib-sync.yml`) had two flaws. Its `workflow_dispatch` trigger let anyone with write access run the job that holds `ASSETLIB_TOKEN` from any branch; a first job now compares `$GITHUB_REF` with `refs/heads/main` in the shell (GitHub's own expression comparison ignores case, so `Main` would pass) and the sync job runs only after it allows the run. The app version was echoed into `$GITHUB_OUTPUT`, where a version containing a newline could add step outputs; it is now read inside the sync step into a quoted shell variable. The sync job also runs in the `assetlib-sync` environment, and the generated comment, `init`'s next steps and the CLI README say to store the token as that environment's secret with deployment branches limited to `main`, which a branch with an edited workflow cannot read (or as a repository secret in a private repository on GitHub Free, which has no environments). `init` never changes an existing workflow: apps that ran it before CLI 0.4.2 should copy the new `branch_gate` job, the sync job's `needs`, `if` and `environment` lines and its sync step, as shown in the CLI README. Node unit tests (including the gate script run under bash for `main`, `Main`, `MAIN` and other refs) and YAML parsing of the four rendered variants. The same jobs in Roam's workflow (AssetLib/demo-travel `4e9c6ba`) ran on GitHub on October 13, 2026: a push to `main` synced inside the environment with the token still a repository secret (run 38488276190), and a manual run from another branch skipped the sync job (run 38488413544).
+- `@assetlib/sdk-core` and `@assetlib/sdk-expo` change only their version. `@assetlib/audit` 0.2.1 is unchanged.
+
 ## 0.7.1-preview.1 — October 13, 2026
 
 - `@assetlib/sdk-core`, `@assetlib/sdk-expo` and `@assetlib/cli` 0.4.1 change only their version and README. No code changed.
