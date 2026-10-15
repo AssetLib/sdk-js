@@ -12,6 +12,7 @@ const LIMITS = { entries: 20000, files: 500, fileBytes: 256 * 1024, totalBytes: 
 const IGNORED = new Set(['node_modules', 'vendor', 'Pods', 'Carthage', 'build', 'Build', 'dist', 'out', 'coverage', 'DerivedData', 'target', 'graft']);
 const EXTENSIONS = new Set(['.tsx', '.jsx', '.ts', '.js']);
 const IMAGE = /\.(?:png|jpe?g|webp)$/i;
+const DENSITY = /^(.+?)@(\d+(?:\.\d+)?)x$/;
 const slash = value => value.split(path.sep).join('/');
 const compare = (a, b) => a < b ? -1 : a > b ? 1 : 0;
 const contained = (root, file) => file === root || file.startsWith(root + path.sep);
@@ -197,6 +198,21 @@ function names(file, image) {
   const parts = words(path.basename(image, path.extname(image)));
   return { screen, key: `${screen}.${parts.join('-')}`, symbol: [words(screen).map(word => word[0].toUpperCase() + word.slice(1)).join(''), parts.map((word, index) => index ? word[0].toUpperCase() + word.slice(1) : word).join('')] };
 }
+// Metro bundles name.png with every name@<scale>x.png beside it, resolves require('./name.png') when only scaled files
+// exist, and does not resolve a require that names a scaled file. Returns the set's unscaled path and files, smallest first.
+async function densitySet(image) {
+  const extension = path.extname(image), directory = path.dirname(image), stem = path.basename(image, extension).replace(DENSITY, '$1');
+  const files = [];
+  let entries = [];
+  try { entries = await readdir(directory); } catch {}
+  for (const name of entries) {
+    if (!name.endsWith(extension)) continue;
+    const base = name.slice(0, -extension.length), match = DENSITY.exec(base);
+    const scale = base === stem ? 1 : match?.[1] === stem ? Number(match[2]) : 0;
+    if (scale > 0) files.push({ file: path.join(directory, name), scale });
+  }
+  return { stem: path.join(directory, stem + extension), files: files.sort((a, b) => a.scale - b.scale) };
+}
 function symbolOverlap(a, b) { return a.slice(0, Math.min(a.length, b.length)).every((value, index) => value === b[index]); }
 
 function editSource(info, candidates, generated, clientModule, clientExport) {
@@ -291,7 +307,7 @@ export async function adopt({ catalogPath, catalog, src, generated: generatedOpt
     clientFile ??= path.extname(clientBase) ? clientBase : clientBase + '.ts';
     if (clientFile === generated || clientFile === catalogPath) throw new Error('Catalog, generated output, and client module must be different files.');
   }
-  const report = { mode: apply ? 'apply' : 'dry-run', summary: {}, candidates: [], skipped: [], collisions: [], issues: [], files: [], notes: ['Dimensions are encoded pixel sizes. Check @2x/@3x sources before accepting placement dimensions.'] };
+  const report = { mode: apply ? 'apply' : 'dry-run', summary: {}, candidates: [], skipped: [], collisions: [], issues: [], files: [], notes: ['Width and height are a reference size (aspect ratio and identity) in encoded pixels of the largest file in each image\'s @2x/@3x set.'] };
   const files = await sourceFiles(root, src.map(value => normalize(path.resolve(value))), generated, report);
   const only = images?.length ? new Map(images.map(value => [normalize(path.resolve(value)), value])) : null;
   const nextCatalog = structuredClone(catalog), originals = new Map(), sourcePlans = [], imageCache = new Map(), runKeys = new Map();
@@ -319,22 +335,24 @@ export async function adopt({ catalogPath, catalog, src, generated: generatedOpt
       if (!contained(root, image)) { skip('image-outside-root'); continue; }
       if (only && !only.has(image)) continue;
       if (/icon|splash|adaptive-icon|mark|logo|brand/i.test(path.basename(image)) || path.relative(root, image).split(path.sep).slice(0, -1).some(part => part.toLowerCase() === 'icons')) { skip('essential'); continue; }
-      let size = imageCache.get(image);
+      const set = await densitySet(image), largest = set.files.at(-1);
+      if (!largest || set.stem !== image && !set.files.some(item => item.file === image)) { skip('image-missing'); continue; }
+      let size = imageCache.get(largest.file);
       if (!size) {
         try {
-          const bytes = await readBounded(root, image, Math.min(LIMITS.imageBytes, LIMITS.totalImageBytes - imageBytesRead)); imageBytesRead += bytes.length;
+          const bytes = await readBounded(root, largest.file, Math.min(LIMITS.imageBytes, LIMITS.totalImageBytes - imageBytesRead)); imageBytesRead += bytes.length;
           const measured = imageSize(bytes);
           if (!['png', 'jpg', 'webp'].includes(measured.type)) throw new Error('unsupported-content');
-          size = { width: measured.width, height: measured.height }; imageCache.set(image, size);
+          size = { width: measured.width, height: measured.height }; imageCache.set(largest.file, size);
         } catch (error) { skip(error.code === 'ENOENT' ? 'image-missing' : error.message === 'symlink-or-outside-root' || error.message === 'unreadable-or-byte-limit' || error.message === 'file-changed-during-scan' ? error.message : 'dimensions-unavailable'); continue; }
       }
-      if (size.width < minEdge && size.height < minEdge) { skip('icon-sized'); continue; }
-      const naming = names(file, image), base = { ...naming, ...size };
+      if (size.width / largest.scale < minEdge && size.height / largest.scale < minEdge) { skip('icon-sized'); continue; }
+      const naming = names(file, set.stem), base = { ...naming, ...size };
       let placement = catalog.placements.find(item => item.key === base.key);
       if (placement && (placement.width !== size.width || placement.height !== size.height)) { skip('catalog-dimension-conflict', { key: base.key }); continue; }
       if (placement) reused++;
       else {
-        const runKey = base.key + '\0' + image;
+        const runKey = base.key + '\0' + set.stem;
         const previous = runKeys.get(runKey);
         if (previous) placement = previous;
         else {
@@ -354,7 +372,7 @@ export async function adopt({ catalogPath, catalog, src, generated: generatedOpt
         }
       }
       selected.push({ ...candidate, placement });
-      report.candidates.push({ ...location(call), image: slash(path.relative(root, image)), key: placement.key, symbol: placement.symbol, ...size, reused: catalog.placements.includes(placement) });
+      report.candidates.push({ ...location(call), image: slash(path.relative(root, image)), measured: slash(path.relative(root, largest.file)), key: placement.key, symbol: placement.symbol, ...size, reused: catalog.placements.includes(placement) });
     }
     if (selected.length) { originals.set(file, text); sourcePlans.push({ file, info, selected }); }
   }
@@ -444,7 +462,7 @@ export async function adopt({ catalogPath, catalog, src, generated: generatedOpt
 export function formatAdoption(report) {
   const summary = report.summary;
   const lines = [`Assetlib adopt ${report.mode === 'apply' ? 'applied' : 'dry run'}`, `${summary.candidates} candidates; ${summary.placementsAdded} placements added; ${summary.placementsReused} existing placements reused; ${summary.skipped} skipped; ${summary.filesChanged} files ${report.mode === 'apply' ? 'changed' : 'would change'}.`];
-  for (const item of report.candidates) lines.push(`  Adopt ${item.path}:${item.line} → ${item.key} (${item.width}×${item.height})`);
+  for (const item of report.candidates) lines.push(`  Adopt ${item.path}:${item.line} → ${item.key} (${item.width}×${item.height}${item.measured === item.image ? '' : ' from ' + item.measured})`);
   for (const item of report.skipped) lines.push(`  Skip ${item.path}:${item.line}: ${item.reason}${item.key ? ' (' + item.key + ')' : ''}`);
   for (const item of report.collisions) lines.push(`  Collision ${item.path}:${item.line}: ${item.originalKey} → ${item.key} (${item.symbol.join('.')})`);
   for (const item of report.issues) lines.push(`  Scan issue ${item.path}:${item.line}: ${item.reason}`);

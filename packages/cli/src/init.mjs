@@ -233,7 +233,7 @@ export function formatInit(report) {
   }
   const count = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
   lines.push(`${count(summary.placementsAdded, 'placement')}; ${count(summary.candidates, 'call site')}; ${count(report.files.length, 'file')} ${report.mode === 'apply' ? 'written' : 'would be written'}.`);
-  for (const item of report.adoption.candidates) lines.push(`  Adopt ${item.path}:${item.line} → ${item.key} (${item.width}×${item.height})`);
+  for (const item of report.adoption.candidates) lines.push(`  Adopt ${item.path}:${item.line} → ${item.key} (${item.width}×${item.height}${item.measured === item.image ? '' : ' from ' + item.measured})`);
   for (const item of report.adoption.skipped) lines.push(`  Skip ${item.path}:${item.line}: ${item.reason}`);
   lines.push(...report.adoption.notes, ...report.notes);
   if (report.mode !== 'apply') lines.push('Rerun with --apply to write these files. Commit your work first so the changes are easy to review.');

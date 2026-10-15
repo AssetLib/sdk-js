@@ -254,15 +254,36 @@ test('reports unsupported require expressions and ambiguous constants with exact
   assert.equal(result.report.files.length, 0);
 });
 
-test('filters icon-sized and essential files and honors both-edge min-edge semantics and density names', async t => {
+test('filters icon-sized and essential files and honors both-edge min-edge semantics at 1×', async t => {
   const f = await fixture(t);
   for (const [name, width, height] of [['small.png', 63, 63], ['wide.png', 64, 12], ['app-icon.png', 1200, 900], ['splash-art.png', 1200, 900], ['adaptive-icon.png', 1200, 900], ['icons/landscape.png', 1200, 900], ['wordmark.png', 1200, 900], ['Logo-large.png', 1200, 900], ['BRAND-art.png', 1200, 900], ['art@2x.png', 600, 400]]) await f.put('assets/' + name, png(width, height));
   await f.put('src/Lab.jsx', `import { Image } from 'expo-image';\nexport const App = () => <>${['small.png', 'wide.png', 'app-icon.png', 'splash-art.png', 'adaptive-icon.png', 'icons/landscape.png', 'wordmark.png', 'Logo-large.png', 'BRAND-art.png', 'art@2x.png'].map(name => `<Image source={require('../assets/${name}')} />`).join('\n')}</>;`);
   const result = await f.run(); assert.equal(result.code, 0, result.stdout);
   assert.equal(result.report.summary.candidates, 2); assert.equal(result.report.skipped.filter(item => item.reason === 'essential').length, 7);
   assert.equal(result.report.skipped.filter(item => item.reason === 'icon-sized').length, 1);
-  assert.deepEqual(result.report.candidates.map(item => [item.key, item.width, item.height]), [['lab.wide', 64, 12], ['lab.art-2x', 600, 400]]);
+  assert.deepEqual(result.report.candidates.map(item => [item.key, item.width, item.height]), [['lab.wide', 64, 12], ['lab.art', 600, 400]]);
   const larger = await f.run(['--min-edge', '100']); assert.equal(larger.report.summary.candidates, 1);
+  assert.equal((await f.run(['--min-edge', '301'])).report.skipped.filter(item => item.reason === 'icon-sized').length, 3, 'art@2x.png is 300 × 200 at 1×');
+});
+
+test('measures the largest file of an @2x/@3x set and keeps density suffixes out of keys', async t => {
+  const f = await fixture(t);
+  for (const [name, width, height] of [['hero.png', 400, 300], ['hero@2x.png', 800, 600], ['hero@3x.png', 1200, 900], ['hero@4x.jpg', 1600, 1200], ['hero-wide@3x.png', 3000, 900], ['banner@2x.png', 800, 400], ['banner@3x.png', 1200, 600], ['tiny.png', 24, 24], ['tiny@2x.png', 48, 48], ['tiny@3x.png', 72, 72], ['ghost.png', 400, 300]]) await f.put('assets/' + name, png(width, height));
+  await f.put('src/Lab.tsx', `import { Image } from 'react-native';\nexport const App = () => <>${['hero.png', 'hero@2x.png', 'banner.png', 'tiny.png', 'ghost@2x.png', 'none.png'].map(name => `<Image source={require('../assets/${name}')} />`).join('\n')}</>;\n`);
+  const dry = await f.run([], false); assert.equal(dry.code, 0, dry.stdout);
+  assert.match(dry.stdout, /Adopt src\/Lab\.tsx:2 → lab\.hero \(1200×900 from assets\/hero@3x\.png\)\n/);
+  assert.match(dry.stdout, /largest file in each image's @2x\/@3x set/);
+  const result = await f.run(['--apply']); assert.equal(result.code, 0, result.stdout);
+  assert.deepEqual(result.report.candidates.map(item => [item.image, item.measured, item.key, item.width, item.height]), [
+    ['assets/hero.png', 'assets/hero@3x.png', 'lab.hero', 1200, 900],
+    ['assets/hero@2x.png', 'assets/hero@3x.png', 'lab.hero', 1200, 900],
+    ['assets/banner.png', 'assets/banner@3x.png', 'lab.banner', 1200, 600],
+  ]);
+  assert.deepEqual(result.report.skipped.map(item => [item.line, item.reason]), [[5, 'icon-sized'], [6, 'image-missing'], [7, 'image-missing']]);
+  assert.deepEqual(JSON.parse(await f.get('assetlib.catalog.json')).placements.slice(1).map(item => [item.key, item.symbol, item.width, item.height]), [['lab.hero', ['Lab', 'hero'], 1200, 900], ['lab.banner', ['Lab', 'banner'], 1200, 600]]);
+  const source = await f.get('src/Lab.tsx');
+  assert.match(source, /asset=\{AppAssets\.Lab\.hero\} fallback=\{require\('\.\.\/assets\/hero@2x\.png'\)\}/);
+  assert.match(source, /asset=\{AppAssets\.Lab\.banner\} fallback=\{require\('\.\.\/assets\/banner\.png'\)\}/);
 });
 
 test('suffixes distinct image key collisions, camelCase symbol collisions, and existing namespace overlaps deterministically', async t => {
