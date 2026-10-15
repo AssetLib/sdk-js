@@ -24,7 +24,7 @@ Separate [Swift](https://github.com/AssetLib/sdk-swift) and [Kotlin](https://git
 Install the same exact version of core and Expo. The core package is precompiled; Expo consumes the adapter's Metro-ready source. Installing these packages does not request an Assetlib account or fetch a cloud catalog.
 
 ```sh
-npm install --save-exact @assetlib/sdk-core@0.7.6-preview.1 @assetlib/sdk-expo@0.7.6-preview.1
+npm install --save-exact @assetlib/sdk-core@0.7.7-preview.1 @assetlib/sdk-expo@0.7.7-preview.1
 npx expo install expo-file-system expo-image
 ```
 
@@ -32,11 +32,11 @@ The npm packages are the files attached to the GitHub release. To install from t
 
 ```sh
 npm install \
-  https://github.com/AssetLib/sdk-js/releases/download/v0.7.6-preview.1/assetlib-sdk-core-0.7.6-preview.1.tgz \
-  https://github.com/AssetLib/sdk-js/releases/download/v0.7.6-preview.1/assetlib-sdk-expo-0.7.6-preview.1.tgz
+  https://github.com/AssetLib/sdk-js/releases/download/v0.7.7-preview.1/assetlib-sdk-core-0.7.7-preview.1.tgz \
+  https://github.com/AssetLib/sdk-js/releases/download/v0.7.7-preview.1/assetlib-sdk-expo-0.7.7-preview.1.tgz
 ```
 
-The preview supports Expo SDK 54 to 57 (React Native 0.81 to 0.86) and React 19. Pin the installed versions in your application's lockfile. Check `SHA256SUMS` attached to the release when reviewing downloaded artifacts. The `assetlib` CLI is `@assetlib/cli` 0.4.4, also attached to the release as `assetlib-cli-0.4.4.tgz`; see the [CLI install steps](packages/cli/README.md#install).
+The preview supports Expo SDK 54 to 57 (React Native 0.81 to 0.86) and React 19. Pin the installed versions in your application's lockfile. Check `SHA256SUMS` attached to the release when reviewing downloaded artifacts. The `assetlib` CLI is `@assetlib/cli` 0.4.5, also attached to the release as `assetlib-cli-0.4.5.tgz`; see the [CLI install steps](packages/cli/README.md#install).
 
 ## Connect one artwork placement
 
@@ -54,8 +54,6 @@ await client.refresh();
   asset={AppAssets.Travel.coast}
   fallback={require('./assets/coast.png')}
   accessibilityMode="decorative"
-  pixelWidth={600}
-  pixelHeight={450}
   contentFit="cover"
   style={{ width: '100%', aspectRatio: 4 / 3 }}
 />
@@ -63,7 +61,7 @@ await client.refresh();
 
 Obtain public app configuration from your authenticated Assetlib workspace. It contains organization/app IDs, a manifest URL, and an independently pinned public signing key; it must never contain admin credentials. Keep one client for the configured app. After refreshing, increment the component's `revision` prop to resolve the accepted release.
 
-See the [core guide](packages/sdk-core/README.md) for the checked-in catalog format and offline generator. Application code uses generated references such as `AppAssets.Travel.coast`; compatible artwork updates preserve that reference. Schema v1 identifies a placement by its key and its width and height. That size is a reference, not a crop: it fixes the aspect ratio every published image must match, and it is the size the SDK requests unless the component asks for specific pixels; the console accepts an image of any pixel size at that aspect ratio, for the base image, every state and every variant cell. Placements are declared in the app repository and registered from CI with `assetlib sync`; a placement someone requested in the console becomes declared when a build registers the same contract. Renames and contract changes require a coordinated migration.
+See the [core guide](packages/sdk-core/README.md) for the checked-in catalog format and offline generator. Application code uses generated references such as `AppAssets.Travel.coast`; compatible artwork updates preserve that reference. Schema v1 identifies a placement by its key and its width and height. Width and height are a reference size: they fix the aspect ratio and identify the placement; the SDK sizes requests from the view (the Expo components request the measured view × `PixelRatio.get()` on the console's rendition tiers unless you pass `pixelWidth` and `pixelHeight`). The console accepts an image of any pixel size at that aspect ratio, for the base image, every state and every variant cell, so never renumber a catalog to change sharpness. Placements are declared in the app repository and registered from CI with `assetlib sync`; a placement someone requested in the console becomes declared when a build registers the same contract. Renames and contract changes require a coordinated migration.
 
 Since 0.4.0-preview.1 the SDKs resolve appearance and arm variants, with an optional app-supplied `decide` callback and `arm` props on Expo placement/state components, and accept staging configurations and pinned signing key sets. See the [resolution and decision contract](packages/sdk-core/README.md#appearance-and-arm-variants). The [CLI](packages/cli/README.md) preserves these declarations during code generation and sync; `adopt` preserves compact catalog placement lines and skips essential icon, splash, mark, logo, and brand images.
 

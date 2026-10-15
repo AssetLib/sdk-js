@@ -806,26 +806,140 @@ for (const [component, method, componentProps, finish] of [
   });
 }
 
-test('template references default the pixel target to logical size times the display scale', async () => {
+const sizingClient = calls => ({ reportDisplay() {}, reportFallback() {}, config, resolve: async (asset, options) => { calls.push([options.pixelWidth, options.pixelHeight]); return resolved('a'); }, resolveStateSet: async (asset, options) => { calls.push([options.pixelWidth, options.pixelHeight]); return { source: 'remote', sequence: 7, message: 'complete', states: { idle: resolved('a'), active: resolved('b') } }; } });
+const layout = async (view, width, height, index = 0) => { await act(async () => { view.root.findAllByType(Image)[index].props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width, height } } }); }); };
+
+test('before layout, requests snap the reference size times the display scale to a rendition tier', async () => {
   harness();
-  const calls = [];
-  const client = { reportDisplay() {}, reportFallback() {}, config, resolve: async (asset, options) => { calls.push({ asset, options }); return resolved('a'); }, resolveStateSet: async (asset, options) => { calls.push({ asset, options }); return { source: 'remote', sequence: 7, message: 'complete', states: { idle: resolved('a'), active: resolved('b') } }; } };
+  const hero = { key: 'home.hero', width: 390, height: 240 };
   const icon = { key: 'tab.trips', width: 24, height: 20, rendering: 'template' };
-  globalThis.__assetlibAdapter.pixelRatio = 2.625;
-  let view;
-  await act(async () => { view = create(React.createElement(adapter.AssetlibImage, { client, asset: icon, fallback: 1, tintColor: '#1f1f1f' })); });
-  assert.deepEqual([calls[0].options.pixelWidth, calls[0].options.pixelHeight], [63, 53]);
-  assert.equal(view.root.findByType(Image).props.tintColor, '#1f1f1f');
-  await act(async () => { view.update(React.createElement(adapter.AssetlibImage, { client, asset: icon, fallback: 1, tintColor: '#1f1f1f', pixelWidth: 48, pixelHeight: 40 })); });
-  assert.deepEqual([calls[1].options.pixelWidth, calls[1].options.pixelHeight], [48, 40], 'An explicit target wins.');
-  await act(async () => { view.update(React.createElement(adapter.AssetlibImage, { client, asset: { key: 'travel.coast', width: 24, height: 20 }, fallback: 1 })); });
-  assert.deepEqual([calls[2].options.pixelWidth, calls[2].options.pixelHeight], [undefined, undefined], 'Original references keep today\'s behavior.');
-  await act(async () => { view.update(React.createElement(adapter.AssetlibStateImage, { client, asset: { ...icon, states: ['idle', 'active'] }, state: 'idle', fallbacks: { idle: 1, active: 2 }, tintColor: '#1f1f1f' })); });
-  assert.deepEqual([calls[3].options.pixelWidth, calls[3].options.pixelHeight], [63, 53]);
+  // Targets are 98% of the tier: [ratio, artwork, icon]. 1023.75 px is the 1024 tier at 2.625; 1365 px is the 2048 tier at 3.5.
+  for (const [ratio, artwork, mask] of [[1, [501, 309], [23, 20]], [2.625, [1003, 618], [70, 59]], [3, [2007, 1236], [70, 59]], [3.5, [2007, 1236], [94, 79]]]) {
+    globalThis.__assetlibAdapter.pixelRatio = ratio;
+    const calls = [];
+    const client = sizingClient(calls);
+    let view;
+    await act(async () => { view = create(React.createElement(adapter.AssetlibImage, { client, asset: hero, fallback: 1 })); });
+    await act(async () => { view.update(React.createElement(adapter.AssetlibImage, { client, asset: icon, fallback: 1, tintColor: '#1f1f1f' })); });
+    await act(async () => { view.update(React.createElement(adapter.AssetlibStateImage, { client, asset: { ...icon, states: ['idle', 'active'] }, state: 'idle', fallbacks: { idle: 1, active: 2 }, tintColor: '#1f1f1f' })); });
+    assert.deepEqual(calls, [artwork, mask, mask], `PixelRatio ${ratio}`);
+    await act(async () => { view.unmount(); });
+  }
+});
+
+test('measured layout times the display scale sets the tier, which only grows within a session', async () => {
+  harness();
   globalThis.__assetlibAdapter.pixelRatio = 3;
-  await act(async () => { view.update(React.createElement(adapter.AssetlibImage, { client, asset: icon, fallback: 1, tintColor: '#1f1f1f' })); });
-  assert.deepEqual([calls[4].options.pixelWidth, calls[4].options.pixelHeight], [72, 60]);
+  const calls = [], appLayouts = [];
+  const client = sizingClient(calls);
+  // A catalog written in pixels: 1200 × 900 drawn 160 points wide.
+  const coast = { key: 'travel.coast', width: 1200, height: 900 };
+  const element = props => React.createElement(adapter.AssetlibImage, { client, asset: coast, fallback: 1, onLayout: event => appLayouts.push(event.nativeEvent.layout.width), ...props });
+  let view;
+  await act(async () => { view = create(element()); });
+  assert.deepEqual(calls, [[2007, 1506]], 'Before layout: 3600 px clamps to the 2048 tier.');
+  await layout(view, 160, 120);
+  assert.deepEqual(calls.at(-1), [501, 376], 'The first layout replaces the estimate: 480 px is the 512 tier.');
+  await layout(view, 0, 120);
+  await layout(view, 161, 121);
+  assert.equal(calls.length, 2, 'Zero sizes and layouts inside the same tier send no request.');
+  await layout(view, 390, 293);
+  assert.deepEqual(calls.at(-1), [2007, 1506], 'Rotation to 1172 px upgrades to the 2048 tier.');
+  await layout(view, 160, 120);
+  await layout(view, 1032, 774);
+  assert.equal(calls.length, 3, 'Rotating back never downgrades; 3096 px stays on the largest tier.');
+  assert.deepEqual(appLayouts, [160, 0, 161, 390, 160, 1032], 'The app onLayout still runs.');
   await act(async () => { view.unmount(); });
+  await act(async () => { view = create(element()); });
+  await layout(view, 160, 120);
+  assert.deepEqual(calls.slice(3), [[2007, 1506]], 'A remount starts from the session tier and keeps it.');
+  await act(async () => { view.unmount(); });
+  await act(async () => { view = create(element({ client: sizingClient(calls) })); });
+  await layout(view, 160, 120);
+  assert.deepEqual(calls.slice(4), [[2007, 1506], [501, 376]], 'Another client keeps its own session.');
+  await act(async () => { view.update(element({ client: sizingClient(calls), pixelWidth: 600, pixelHeight: 450 })); });
+  await layout(view, 390, 293);
+  assert.deepEqual(calls.slice(6), [[600, 450]], 'An explicit target wins and ignores layout.');
+  await act(async () => { view.unmount(); });
+});
+
+test('views of one placement keep their own tiers', async () => {
+  harness();
+  globalThis.__assetlibAdapter.pixelRatio = 2;
+  const calls = [];
+  const client = sizingClient(calls);
+  const coast = { key: 'travel.coast', width: 1200, height: 900 };
+  const pair = hint => React.createElement(React.Fragment, null, React.createElement(adapter.AssetlibImage, { client, asset: coast, fallback: 1, accessibilityHint: hint }), React.createElement(adapter.AssetlibImage, { client, asset: coast, fallback: 1, accessibilityHint: hint }));
+  let view;
+  await act(async () => { view = create(pair('a')); });
+  assert.deepEqual(calls, [[2007, 1506], [2007, 1506]]);
+  await layout(view, 340, 255, 0);
+  await layout(view, 340, 255, 1);
+  assert.deepEqual(calls.slice(2), [[1003, 753], [1003, 753]], 'Two mounts in one commit each replace the estimate: 680 px is the 1024 tier.');
+  await layout(view, 1032, 774, 0);
+  assert.deepEqual(calls.slice(4), [[2007, 1506]], 'One view grows to the 2048 tier.');
+  await act(async () => { view.update(pair('b')); });
+  assert.equal(calls.length, 5, 'Re-rendering does not move the smaller view to its sibling\'s tier.');
+  await act(async () => { view.unmount(); });
+  await act(async () => { view = create(React.createElement(adapter.AssetlibImage, { client, asset: coast, fallback: 1 })); });
+  assert.deepEqual(calls.slice(5), [[2007, 1506]], 'A new mount starts from the largest tier this session measured.');
+  await act(async () => { view.unmount(); });
+});
+
+test('layout tiers follow contentFit, Android densities and the tintable icon tiers', async () => {
+  harness();
+  const banner = { key: 'home.banner', width: 1000, height: 250 };
+  const coast = { key: 'travel.coast', width: 1200, height: 900 };
+  const icon = { key: 'tab.saved', width: 24, height: 24, rendering: 'template' };
+  const cases = [
+    [banner, 2.625, {}, [390, 240], [2007, 502]], // cover: 390 × 240 points needs 960 × 240 × 2.625 = 2520 px
+    [banner, 2.625, { contentFit: 'contain' }, [390, 240], [1003, 251]], // contain: 390 × 2.625 = 1023.75 px
+    [banner, 3.5, { contentFit: 'scale-down' }, [100, 100], [501, 126]], // 350 px
+    [coast, 3, {}, [Math.fround(1024 / 3), 256], [1003, 753]], // a float layout value: 1024.00002 px is the 1024 tier
+    [icon, 2.625, { tintColor: '#1f1f1f' }, [32, 32], [94, 94]], // 84 px is the 96 tier
+    [icon, 3.5, { tintColor: '#1f1f1f' }, [48, 48], [188, 188]], // 168 px is the 192 tier
+  ];
+  for (const [asset, ratio, props, [width, height], expected] of cases) {
+    globalThis.__assetlibAdapter.pixelRatio = ratio;
+    const calls = [];
+    let view;
+    await act(async () => { view = create(React.createElement(adapter.AssetlibImage, { client: sizingClient(calls), asset, fallback: 1, ...props })); });
+    await layout(view, width, height);
+    assert.deepEqual(calls.at(-1), expected, `${asset.key} at ${ratio} ${JSON.stringify(props)}`);
+    await act(async () => { view.unmount(); });
+  }
+  globalThis.__assetlibAdapter.pixelRatio = 3;
+  const calls = [];
+  let view;
+  await act(async () => { view = create(React.createElement(adapter.AssetlibStateImage, { client: sizingClient(calls), asset: { key: 'tasks.garden', width: 120, height: 120, states: ['sprout', 'grown'] }, state: 'sprout', fallbacks })); });
+  await layout(view, 200, 200);
+  assert.deepEqual(calls, [[501, 501], [1003, 1003]], 'State families measure too: 600 px is the 1024 tier.');
+  await act(async () => { view.unmount(); });
+});
+
+test('core selects the tier rendition, or the next one when an unusual ratio leaves it short', async () => {
+  harness();
+  globalThis.__assetlibAdapter.pixelRatio = 2;
+  const { selectAssetCandidates } = await import(pathToFileURL(path.join(root, '../sdk-core/dist/index.js')));
+  const rendition = (width, height) => ({ sha256: String(width).padStart(64, '0'), mime: 'image/webp', bytes: width, width, height, url: `/r/${width}` });
+  // The console makes renditions at integer multiples of the reduced ratio: 3:2 gives 510, 1023 and 2046;
+  // a 1170 × 2532 phone frame (195:422) gives 195 × 422, 390 × 844 and 780 × 1688.
+  const sets = [
+    [{ key: 'home.hero', width: 1200, height: 800 }, [rendition(2046, 1364), rendition(510, 340), rendition(1023, 682)]],
+    [{ key: 'home.frame', width: 390, height: 844 }, [rendition(780, 1688), rendition(195, 422), rendition(390, 844)]],
+  ];
+  const picks = [];
+  for (const [asset, renditions] of sets) {
+    const slot = { ...asset, sha256: 'f'.repeat(64), mime: 'image/webp', bytes: 1, url: '/legacy', renditions };
+    const client = { ...sizingClient([]), resolve: async (_asset, options) => { picks.push(selectAssetCandidates(slot, { width: options.pixelWidth, height: options.pixelHeight }, ['image/webp', 'image/png'])[0].width); return resolved('a'); } };
+    let view;
+    await act(async () => { view = create(React.createElement(adapter.AssetlibImage, { client, asset, fallback: 1 })); });
+    const portrait = asset.height > asset.width;
+    // Points whose long edge × 2 needs 500, 1000 and 2000 px.
+    for (const need of [250, 500, 1000]) await layout(view, portrait ? need * asset.width / asset.height : need, portrait ? need : need * asset.height / asset.width);
+    await act(async () => { view.unmount(); });
+  }
+  assert.deepEqual(picks, [2046, 510, 1023, 2046, 780, 390, 780, 780], 'Estimate, then 500, 1000 and 2000 px: 1023 serves the 1024 tier; 844 px is too short for 1000 px, so 1688 does.');
 });
 
 test('a template reference without tintColor warns once per placement in development only', async () => {

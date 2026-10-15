@@ -4,16 +4,16 @@ Set up an Expo app's integration, register a checked-in Assetlib catalog with th
 
 ## Install
 
-The CLI is on npm as `@assetlib/cli`, a developer preview under the `preview` dist-tag. Install an exact version; release `v0.7.5-preview.1` ships 0.4.4:
+The CLI is on npm as `@assetlib/cli`, a developer preview under the `preview` dist-tag. Install an exact version; release `v0.7.7-preview.1` ships 0.4.5:
 
 ```sh
-npm install --save-dev --save-exact @assetlib/cli@0.4.4
+npm install --save-dev --save-exact @assetlib/cli@0.4.5
 node ./node_modules/@assetlib/cli/bin/assetlib.mjs --help
 ```
 
 Run the installed package's own entry file, as above, and commit the lockfile so `npm ci` checks the package's hash. The unscoped `assetlib` name on npm is not ours: never install it or `npx` it by name, because that would fetch whatever package holds the name and run it beside `ASSETLIB_TOKEN`. The `assetlib` commands below assume this entry file (or an npm script that calls it).
 
-The same package is attached to the GitHub release as a tarball: `npm install --save-dev https://github.com/AssetLib/sdk-js/releases/download/v0.7.5-preview.1/assetlib-cli-0.4.4.tgz` installs it from there; check it against the release's `SHA256SUMS`. From a checkout of this repository, after `npm ci`, run it directly:
+The same package is attached to the GitHub release as a tarball: `npm install --save-dev https://github.com/AssetLib/sdk-js/releases/download/v0.7.7-preview.1/assetlib-cli-0.4.5.tgz` installs it from there; check it against the release's `SHA256SUMS`. From a checkout of this repository, after `npm ci`, run it directly:
 
 ```sh
 node packages/cli/bin/assetlib.mjs --help

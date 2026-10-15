@@ -44,12 +44,74 @@ function useEffectiveAppearance(appearance: 'light' | 'dark' | 'system') {
   return systemAppearance === 'light' || systemAppearance === 'dark' ? systemAppearance : undefined;
 }
 
-/** Template masks are rasters: without an explicit target, request logical size × display scale. */
-function pixelTarget(asset: AssetRef, pixelWidth?: number, pixelHeight?: number): { pixelWidth?: number; pixelHeight?: number } {
-  if (asset.rendering !== 'template' || pixelWidth !== undefined || pixelHeight !== undefined) return { pixelWidth, pixelHeight };
+// The console's rendition tiers (long edge in pixels): artwork, then tintable icon masks.
+const ARTWORK_TIERS = [512, 1024, 2048];
+const ICON_TIERS = [24, 48, 72, 96, 192, 512];
+/** The largest tier measured per placement in this client's session; it seeds new mounts. */
+const sessionTiers = new WeakMap<AssetClient, Map<string, number>>();
+type MeasuredTier = { client: AssetClient; id: string; tier: number; measured: boolean };
+
+const tiersFor = (asset: AssetRef) => asset.rendering === 'template' ? ICON_TIERS : ARTWORK_TIERS;
+function tierFor(asset: AssetRef, longEdge: number): number {
+  const tiers = tiersFor(asset);
+  // Half a pixel absorbs float layout values, such as 341.333 points at 3x.
+  const index = tiers.findIndex(tier => tier + 0.5 >= longEdge);
+  return index < 0 ? tiers.length - 1 : index;
+}
+function displayScale(): number {
   const ratio = PixelRatio.get();
-  const scale = Number.isFinite(ratio) && ratio > 0 ? ratio : 1;
-  return { pixelWidth: Math.min(8192, Math.ceil(asset.width * scale)), pixelHeight: Math.min(8192, Math.ceil(asset.height * scale)) };
+  return Number.isFinite(ratio) && ratio > 0 ? ratio : 1;
+}
+
+/**
+ * 98% of the tier: core picks the tier's rendition when an integer aspect ratio leaves it a few
+ * pixels short, and the next larger one when an unusual ratio leaves it further short.
+ */
+function tierTarget(asset: AssetRef, tier: number): { pixelWidth: number; pixelHeight: number } {
+  const longEdge = Math.floor(tiersFor(asset)[tier] * 0.98);
+  const long = Math.max(asset.width, asset.height);
+  return { pixelWidth: Math.max(1, Math.ceil(longEdge * asset.width / long)), pixelHeight: Math.max(1, Math.ceil(longEdge * asset.height / long)) };
+}
+
+/** The tier a view needs: its layout × display scale, enough to cover the box (or fit it for contain). */
+function measuredTier(asset: AssetRef, layout: { width: number; height: number }, ratio: number, contentFit?: ImageProps['contentFit']): number | undefined {
+  if (!(layout.width > 0 && layout.height > 0 && Number.isFinite(layout.width) && Number.isFinite(layout.height))) return undefined;
+  const fit = contentFit === 'contain' || contentFit === 'scale-down' ? Math.min : Math.max;
+  return tierFor(asset, fit(layout.width / asset.width, layout.height / asset.height) * Math.max(asset.width, asset.height) * ratio);
+}
+
+/**
+ * Without an explicit target, request the measured view × PixelRatio snapped to a tier. A mount starts
+ * from the session's tier for this placement, else from the reference size × PixelRatio, which its first
+ * layout replaces. After that only this view's own layout changes its tier, and only upward.
+ */
+function usePixelTarget(client: AssetClient, asset: AssetRef, pixelWidth: number | undefined, pixelHeight: number | undefined, contentFit: ImageProps['contentFit'], onLayout: ImageProps['onLayout']) {
+  const explicit = pixelWidth !== undefined || pixelHeight !== undefined;
+  const id = `${asset.key}:${asset.width}x${asset.height}:${asset.rendering ?? 'original'}`;
+  const tiers = sessionTiers.get(client) ?? new Map<string, number>();
+  sessionTiers.set(client, tiers);
+  const seed = (): MeasuredTier => {
+    const known = tiers.get(id);
+    return { client, id, measured: known !== undefined, tier: known ?? tierFor(asset, Math.max(asset.width, asset.height) * displayScale()) };
+  };
+  const [stored, setStored] = useState(seed);
+  let current = stored;
+  if (stored.client !== client || stored.id !== id) setStored(current = seed());
+  return {
+    ...(explicit ? { pixelWidth, pixelHeight } : tierTarget(asset, current.tier)),
+    onLayout(event: Parameters<NonNullable<ImageProps['onLayout']>>[0]) {
+      const measured = explicit ? undefined : measuredTier(asset, event.nativeEvent.layout, displayScale(), contentFit);
+      if (measured !== undefined) {
+        tiers.set(id, Math.max(tiers.get(id) ?? measured, measured));
+        setStored(previous => {
+          const base = previous.client === client && previous.id === id ? previous : current;
+          const tier = base.measured ? Math.max(base.tier, measured) : measured;
+          return base.measured && tier === base.tier ? base : { client, id, measured: true, tier };
+        });
+      }
+      onLayout?.(event);
+    },
+  };
 }
 
 const tintWarnings = new Set<string>();
@@ -147,12 +209,12 @@ function useResolvedImage(client: AssetClient, asset: AssetRef | DynamicAssetRef
 export function AssetlibImage<R extends AssetRef>({ client, asset, arm, fallback, fallbackDark, appearance = 'system', fallbackAccessibility = asset.bundledAccessibility, accessibilityMode, accessibilityLocale, revision = 0, pixelWidth: requestedPixelWidth, pixelHeight: requestedPixelHeight, cachePolicy, onStatus, onError, onLoad, ...rest }: AssetlibImageProps<R>) {
   const props: Omit<ImageProps, 'source' | 'cachePolicy'> = rest;
   const effectiveAppearance = useEffectiveAppearance(appearance);
-  const { pixelWidth, pixelHeight } = pixelTarget(asset, requestedPixelWidth, requestedPixelHeight);
+  const { pixelWidth, pixelHeight, onLayout } = usePixelTarget(client, asset, requestedPixelWidth, requestedPixelHeight, props.contentFit, props.onLayout);
   useTemplateTintWarning(asset, props.tintColor);
   const requireDescription = accessibilityMode === 'description' && props.accessibilityLabel == null;
   const request = useMemo(() => ({}), [client, asset.key, asset.width, asset.height, asset.rendering, arm, revision, pixelWidth, pixelHeight, cachePolicy, requireDescription, effectiveAppearance]);
   const image = useResolvedImage(client, asset, request, signal => client.resolve(asset, { pixelWidth, pixelHeight, cachePolicy, appearance: effectiveAppearance, arm, signal }), effectiveAppearance === 'dark' ? fallbackDark ?? fallback : fallback, fallbackAccessibility, requireDescription, onStatus);
-  return <Image {...props} key={image.rendererKey} {...accessibilityProps(props, accessibilityMode, image.accessibility, accessibilityLocale)} cachePolicy="none" source={image.source} onLoad={event => { image.loaded(event); onLoad?.(event); }} onError={event => { image.fail(); onError?.(event); }} />;
+  return <Image {...props} key={image.rendererKey} {...accessibilityProps(props, accessibilityMode, image.accessibility, accessibilityLocale)} cachePolicy="none" source={image.source} onLayout={onLayout} onLoad={event => { image.loaded(event); onLoad?.(event); }} onError={event => { image.fail(); onError?.(event); }} />;
 }
 
 /** Runtime references come from this client's verified collection page, never from an arbitrary URL. */
@@ -168,7 +230,7 @@ export function AssetlibDynamicImage({ client, asset, fallback, fallbackDark, ap
 export function AssetlibStateImage<R extends StateSetRef>({ client, asset, arm, state, fallbacks, fallbacksDark, appearance = 'system', fallbackAccessibility = asset.bundledStateAccessibility, accessibilityMode, accessibilityLocale, revision = 0, pixelWidth: requestedPixelWidth, pixelHeight: requestedPixelHeight, cachePolicy, onStatus, onError, onLoad, ...rest }: AssetlibStateImageProps<R>) {
   const props: Omit<ImageProps, 'source' | 'cachePolicy'> = rest;
   const effectiveAppearance = useEffectiveAppearance(appearance);
-  const { pixelWidth, pixelHeight } = pixelTarget(asset, requestedPixelWidth, requestedPixelHeight);
+  const { pixelWidth, pixelHeight, onLayout } = usePixelTarget(client, asset, requestedPixelWidth, requestedPixelHeight, props.contentFit, props.onLayout);
   useTemplateTintWarning(asset, props.tintColor);
   const statesKey = JSON.stringify(asset.states);
   const requireDescription = accessibilityMode === 'description' && props.accessibilityLabel == null;
@@ -226,7 +288,7 @@ export function AssetlibStateImage<R extends StateSetRef>({ client, asset, arm, 
   const fallback = (effectiveAppearance === 'dark' ? fallbacksDark ?? fallbacks : fallbacks)[state];
   const rendererKey = useRendererKey(request, selected ?? fallback, state);
   const isCurrent = () => selected && currentSelection.current.request === request && currentSelection.current.state === state && currentUris.current === resolved?.images;
-  return <Image {...props} key={rendererKey} {...accessibilityProps(props, accessibilityMode, metadata, accessibilityLocale)} cachePolicy="none" source={selected ? { uri: selected.uri } : fallback} onLoad={event => {
+  return <Image {...props} key={rendererKey} {...accessibilityProps(props, accessibilityMode, metadata, accessibilityLocale)} cachePolicy="none" source={selected ? { uri: selected.uri } : fallback} onLayout={onLayout} onLoad={event => {
     if (isCurrent() && !displayed.current && resolved!.results[state].source !== 'bundle' && matchesLoadedSource(event, selected!.uri)) {
       displayed.current = true;
       client.reportDisplay(asset, resolved!.results[state]);
