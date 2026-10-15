@@ -4,16 +4,16 @@ Set up an Expo app's integration, register a checked-in Assetlib catalog with th
 
 ## Install
 
-The CLI is on npm as `@assetlib/cli`, a developer preview under the `preview` dist-tag. Install an exact version; release `v0.7.7-preview.1` ships 0.4.5:
+The CLI is on npm as `@assetlib/cli`, a developer preview under the `preview` dist-tag. Install an exact version; release `v0.7.9-preview.1` ships 0.4.6:
 
 ```sh
-npm install --save-dev --save-exact @assetlib/cli@0.4.5
+npm install --save-dev --save-exact @assetlib/cli@0.4.6
 node ./node_modules/@assetlib/cli/bin/assetlib.mjs --help
 ```
 
 Run the installed package's own entry file, as above, and commit the lockfile so `npm ci` checks the package's hash. The unscoped `assetlib` name on npm is not ours: never install it or `npx` it by name, because that would fetch whatever package holds the name and run it beside `ASSETLIB_TOKEN`. The `assetlib` commands below assume this entry file (or an npm script that calls it).
 
-The same package is attached to the GitHub release as a tarball: `npm install --save-dev https://github.com/AssetLib/sdk-js/releases/download/v0.7.7-preview.1/assetlib-cli-0.4.5.tgz` installs it from there; check it against the release's `SHA256SUMS`. From a checkout of this repository, after `npm ci`, run it directly:
+The same package is attached to the GitHub release as a tarball: `npm install --save-dev https://github.com/AssetLib/sdk-js/releases/download/v0.7.9-preview.1/assetlib-cli-0.4.6.tgz` installs it from there; check it against the release's `SHA256SUMS`. From a checkout of this repository, after `npm ci`, run it directly:
 
 ```sh
 node packages/cli/bin/assetlib.mjs --help
@@ -172,7 +172,7 @@ Width and height are a reference size: they fix the aspect ratio every published
 
 ## Instructions for coding agents
 
-When `adopt` or `init` adopts something, it also adds or updates one section in `AGENTS.md` beside the catalog, between `<!-- assetlib:start -->` and `<!-- assetlib:end -->`, and creates `AGENTS.md` when it is missing. Coding agents that read the repository then know where the catalog is, render placements with `AssetlibImage` and the generated reference, and add a placement in the catalog with a bundled fallback instead of in the console. They also use the placement instead of exporting the image when they build a screen from Figma: the Assetlib Figma plugin inserts placement art as a component whose description starts with "Assetlib placement" and the key, which Figma's MCP server passes to the agent.
+When `adopt` or `init` adopts something, it also adds or updates one section in `AGENTS.md` beside the catalog, between `<!-- assetlib:start -->` and `<!-- assetlib:end -->`, and creates `AGENTS.md` when it is missing. Coding agents that read the repository then know where the catalog is, render placements with `AssetlibImage` and the generated reference, and add a placement in the catalog with a bundled fallback instead of in the console. They also render the placement instead of a downloaded copy when they build a screen from Figma, including with Figma's design-to-code skill, and download Figma's image only as the bundled fallback of a key not yet in the catalog: the Assetlib Figma plugin inserts placement art as a component whose description starts with "Assetlib placement" and the key, which Figma's MCP server passes to the agent.
 
 - `CLAUDE.md` gets the same section when it exists and does not import `AGENTS.md` with `@AGENTS.md`. A missing `CLAUDE.md` is not created.
 - Text outside the markers is kept. A later run replaces the section where it is, and the dry run shows its diff like any other file.
@@ -187,7 +187,7 @@ When `adopt` or `init` adopts something, it also adds or updates one section in 
 
 - Read `assetlib.catalog.json` before adding or changing artwork.
 - Render a placement with `AssetlibImage` from `@assetlib/sdk-expo` and its generated reference, for example `asset={AppAssets.Travel.coastHero}` for `travel.coast-hero`, with the bundled image as `fallback`. Never point an `Image` at a placement's file instead.
-- In Figma, art inserted by the Assetlib plugin is a component whose description starts with "Assetlib placement" and the key, and whose layer name starts with the key. Use that key's generated reference; don't export the image from Figma.
+- In Figma, art inserted by the Assetlib plugin is a component whose description starts with "Assetlib placement" and the key, and whose layer name starts with the key. When you build a screen from Figma, including with Figma's design-to-code skill, treat that art as data-supplied imagery whose exact codebase match is the key's generated reference, and render it with that reference. Download the image only when the key isn't in the catalog yet, as its bundled fallback, and use Figma's image as it is rather than redrawing it.
 - To add art that should change after release, add a catalog entry and its bundled fallback image in the same change, then regenerate `src/assets.generated.ts` with `assetlib-codegen` (`assetlib adopt` does both for an existing `Image` call site). CI's `assetlib sync` declares it. Never create placements in the Assetlib console.
 - Never edit `src/assets.generated.ts` by hand; `assetlib check` compares it. Renaming a key creates a new placement, so ask first.
 - Not placements: the app icon, the splash screen, colors, and images that come from user or API data.

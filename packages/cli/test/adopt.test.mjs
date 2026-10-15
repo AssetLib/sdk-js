@@ -585,6 +585,18 @@ test('the agent section keeps CRLF files CRLF, and refuses markers out of order 
   assert.equal(agentSection({ catalogFile: 'a`b\nc.json', generatedFile: 'g.ts', example: null }).includes('a`b'), false, 'paths cannot break out of code spans');
 });
 
+// Figma's design-to-code skill says agents MUST download every static asset, except data-supplied imagery and exact
+// codebase matches. Claiming those exceptions keeps the agent on the reference; forbidding the download outright made
+// agents redraw the fallback of a key not yet in the catalog (Figma MCP test, October 15, 2026).
+test('the agent section claims Figma\'s exceptions and keeps Figma\'s image as a new key\'s fallback', () => {
+  const figma = agentSection({ catalogFile: 'assetlib.catalog.json', generatedFile: 'src/assets.generated.ts', example: null })
+    .split('\n').find(line => line.startsWith('- In Figma'));
+  assert.match(figma, /data-supplied imagery whose exact codebase match is the key's generated reference, and render it with that reference/);
+  assert.match(figma, /Download the image only when the key isn't in the catalog yet, as its bundled fallback/);
+  assert.match(figma, /rather than redrawing it/);
+  assert.doesNotMatch(figma, /don't export/);
+});
+
 test('the CLI README shows the agent section exactly as adopt writes it', async () => {
   const readme = await readFile(fileURLToPath(new URL('../README.md', import.meta.url)), 'utf8');
   // The markers on lines of their own, not where the prose above names them.

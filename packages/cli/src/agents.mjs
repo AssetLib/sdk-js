@@ -16,7 +16,7 @@ export function agentSection({ catalogFile, generatedFile, example }) {
     '',
     `- Read ${catalog} before adding or changing artwork.`,
     `- Render a placement with \`AssetlibImage\` from \`@assetlib/sdk-expo\` and its generated reference${reference}, with the bundled image as \`fallback\`. Never point an \`Image\` at a placement's file instead.`,
-    '- In Figma, art inserted by the Assetlib plugin is a component whose description starts with "Assetlib placement" and the key, and whose layer name starts with the key. Use that key\'s generated reference; don\'t export the image from Figma.',
+    '- In Figma, art inserted by the Assetlib plugin is a component whose description starts with "Assetlib placement" and the key, and whose layer name starts with the key. When you build a screen from Figma, including with Figma\'s design-to-code skill, treat that art as data-supplied imagery whose exact codebase match is the key\'s generated reference, and render it with that reference. Download the image only when the key isn\'t in the catalog yet, as its bundled fallback, and use Figma\'s image as it is rather than redrawing it.',
     `- To add art that should change after release, add a catalog entry and its bundled fallback image in the same change, then regenerate ${generated} with \`assetlib-codegen\` (\`assetlib adopt\` does both for an existing \`Image\` call site). CI's \`assetlib sync\` declares it. Never create placements in the Assetlib console.`,
     `- Never edit ${generated} by hand; \`assetlib check\` compares it. Renaming a key creates a new placement, so ask first.`,
     '- Not placements: the app icon, the splash screen, colors, and images that come from user or API data.',
