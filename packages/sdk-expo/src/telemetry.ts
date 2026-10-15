@@ -48,7 +48,7 @@ export function expoTelemetry(telemetry: ClientOptions['telemetry']): ClientOpti
   if (!telemetry?.enabled) return telemetry;
   return {
     ...telemetry,
-    sdk: telemetry.sdk ?? { name: 'sdk-expo', version: '0.7.7-preview.1' },
+    sdk: telemetry.sdk ?? { name: 'sdk-expo', version: '0.7.8-preview.1' },
     build: telemetry.build ?? runtimeBuild() ?? { platform: 'expo', appVersion: 'unknown', buildNumber: 'unknown' },
   };
 }

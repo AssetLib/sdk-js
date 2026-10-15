@@ -49,7 +49,7 @@ const ARTWORK_TIERS = [512, 1024, 2048];
 const ICON_TIERS = [24, 48, 72, 96, 192, 512];
 /** The largest tier measured per placement in this client's session; it seeds new mounts. */
 const sessionTiers = new WeakMap<AssetClient, Map<string, number>>();
-type MeasuredTier = { client: AssetClient; id: string; tier: number; measured: boolean };
+type MeasuredTier = { client: AssetClient; id: string; tier: number; measured: boolean; laidOut: boolean };
 
 const tiersFor = (asset: AssetRef) => asset.rendering === 'template' ? ICON_TIERS : ARTWORK_TIERS;
 function tierFor(asset: AssetRef, longEdge: number): number {
@@ -82,8 +82,9 @@ function measuredTier(asset: AssetRef, layout: { width: number; height: number }
 
 /**
  * Without an explicit target, request the measured view × PixelRatio snapped to a tier. A mount starts
- * from the session's tier for this placement, else from the reference size × PixelRatio, which its first
- * layout replaces. After that only this view's own layout changes its tier, and only upward.
+ * from the session's tier for this placement; without one it is pending until its first layout, so it
+ * resolves once. A first layout without a size uses the reference size × PixelRatio until a sized layout
+ * replaces it. Once measured, only this view's own layout changes its tier, and only upward.
  */
 function usePixelTarget(client: AssetClient, asset: AssetRef, pixelWidth: number | undefined, pixelHeight: number | undefined, contentFit: ImageProps['contentFit'], onLayout: ImageProps['onLayout']) {
   const explicit = pixelWidth !== undefined || pixelHeight !== undefined;
@@ -92,21 +93,23 @@ function usePixelTarget(client: AssetClient, asset: AssetRef, pixelWidth: number
   sessionTiers.set(client, tiers);
   const seed = (): MeasuredTier => {
     const known = tiers.get(id);
-    return { client, id, measured: known !== undefined, tier: known ?? tierFor(asset, Math.max(asset.width, asset.height) * displayScale()) };
+    return { client, id, measured: known !== undefined, laidOut: false, tier: known ?? tierFor(asset, Math.max(asset.width, asset.height) * displayScale()) };
   };
   const [stored, setStored] = useState(seed);
   let current = stored;
   if (stored.client !== client || stored.id !== id) setStored(current = seed());
   return {
     ...(explicit ? { pixelWidth, pixelHeight } : tierTarget(asset, current.tier)),
+    pending: !explicit && !current.measured && !current.laidOut,
     onLayout(event: Parameters<NonNullable<ImageProps['onLayout']>>[0]) {
       const measured = explicit ? undefined : measuredTier(asset, event.nativeEvent.layout, displayScale(), contentFit);
-      if (measured !== undefined) {
-        tiers.set(id, Math.max(tiers.get(id) ?? measured, measured));
+      if (measured !== undefined) tiers.set(id, Math.max(tiers.get(id) ?? measured, measured));
+      if (!explicit) {
         setStored(previous => {
           const base = previous.client === client && previous.id === id ? previous : current;
+          if (measured === undefined) return base.measured || base.laidOut ? base : { ...base, laidOut: true };
           const tier = base.measured ? Math.max(base.tier, measured) : measured;
-          return base.measured && tier === base.tier ? base : { client, id, measured: true, tier };
+          return base.measured && tier === base.tier ? base : { client, id, measured: true, laidOut: true, tier };
         });
       }
       onLayout?.(event);
@@ -147,7 +150,7 @@ function matchesLoadedSource(event: Parameters<NonNullable<ImageProps['onLoad']>
 }
 
 /** A request token hides the previous asset immediately when a recycled view changes identity. */
-function useResolvedImage(client: AssetClient, asset: AssetRef | DynamicAssetRef, request: object, resolve: (signal: AbortSignal) => Promise<ResolvedAsset>, fallback: ImageSource, fallbackAccessibility: AssetAccessibility | undefined, requireDescription: boolean, onStatus?: (status: AssetStatus) => void) {
+function useResolvedImage(client: AssetClient, asset: AssetRef | DynamicAssetRef, request: object, resolve: (signal: AbortSignal) => Promise<ResolvedAsset>, fallback: ImageSource, fallbackAccessibility: AssetAccessibility | undefined, requireDescription: boolean, onStatus?: (status: AssetStatus) => void, pending = false) {
   const [resolved, setResolved] = useState<{ request: object; image: ImageUri; result: ResolvedAsset; accessibility?: AssetAccessibility } | null>(null);
   const callbacks = useRef({ resolve, onStatus });
   callbacks.current = { resolve, onStatus };
@@ -156,6 +159,7 @@ function useResolvedImage(client: AssetClient, asset: AssetRef | DynamicAssetRef
   currentRequest.current = request;
   const displayed = useRef(false);
   useEffect(() => {
+    if (pending) { setResolved(null); return; }
     const controller = new AbortController();
     let localUri: ImageUri | null = null;
     setResolved(null);
@@ -183,7 +187,7 @@ function useResolvedImage(client: AssetClient, asset: AssetRef | DynamicAssetRef
       localUri?.release();
       if (currentUri.current === localUri) currentUri.current = null;
     };
-  }, [client, request]);
+  }, [client, request, pending]);
   const isCurrent = () => resolved?.request === request && currentRequest.current === request && currentUri.current === resolved.image;
   const selected = resolved?.request === request ? resolved : null;
   const rendererKey = useRendererKey(request, selected?.image ?? fallback);
@@ -209,11 +213,11 @@ function useResolvedImage(client: AssetClient, asset: AssetRef | DynamicAssetRef
 export function AssetlibImage<R extends AssetRef>({ client, asset, arm, fallback, fallbackDark, appearance = 'system', fallbackAccessibility = asset.bundledAccessibility, accessibilityMode, accessibilityLocale, revision = 0, pixelWidth: requestedPixelWidth, pixelHeight: requestedPixelHeight, cachePolicy, onStatus, onError, onLoad, ...rest }: AssetlibImageProps<R>) {
   const props: Omit<ImageProps, 'source' | 'cachePolicy'> = rest;
   const effectiveAppearance = useEffectiveAppearance(appearance);
-  const { pixelWidth, pixelHeight, onLayout } = usePixelTarget(client, asset, requestedPixelWidth, requestedPixelHeight, props.contentFit, props.onLayout);
+  const { pixelWidth, pixelHeight, pending, onLayout } = usePixelTarget(client, asset, requestedPixelWidth, requestedPixelHeight, props.contentFit, props.onLayout);
   useTemplateTintWarning(asset, props.tintColor);
   const requireDescription = accessibilityMode === 'description' && props.accessibilityLabel == null;
   const request = useMemo(() => ({}), [client, asset.key, asset.width, asset.height, asset.rendering, arm, revision, pixelWidth, pixelHeight, cachePolicy, requireDescription, effectiveAppearance]);
-  const image = useResolvedImage(client, asset, request, signal => client.resolve(asset, { pixelWidth, pixelHeight, cachePolicy, appearance: effectiveAppearance, arm, signal }), effectiveAppearance === 'dark' ? fallbackDark ?? fallback : fallback, fallbackAccessibility, requireDescription, onStatus);
+  const image = useResolvedImage(client, asset, request, signal => client.resolve(asset, { pixelWidth, pixelHeight, cachePolicy, appearance: effectiveAppearance, arm, signal }), effectiveAppearance === 'dark' ? fallbackDark ?? fallback : fallback, fallbackAccessibility, requireDescription, onStatus, pending);
   return <Image {...props} key={image.rendererKey} {...accessibilityProps(props, accessibilityMode, image.accessibility, accessibilityLocale)} cachePolicy="none" source={image.source} onLayout={onLayout} onLoad={event => { image.loaded(event); onLoad?.(event); }} onError={event => { image.fail(); onError?.(event); }} />;
 }
 
@@ -230,7 +234,7 @@ export function AssetlibDynamicImage({ client, asset, fallback, fallbackDark, ap
 export function AssetlibStateImage<R extends StateSetRef>({ client, asset, arm, state, fallbacks, fallbacksDark, appearance = 'system', fallbackAccessibility = asset.bundledStateAccessibility, accessibilityMode, accessibilityLocale, revision = 0, pixelWidth: requestedPixelWidth, pixelHeight: requestedPixelHeight, cachePolicy, onStatus, onError, onLoad, ...rest }: AssetlibStateImageProps<R>) {
   const props: Omit<ImageProps, 'source' | 'cachePolicy'> = rest;
   const effectiveAppearance = useEffectiveAppearance(appearance);
-  const { pixelWidth, pixelHeight, onLayout } = usePixelTarget(client, asset, requestedPixelWidth, requestedPixelHeight, props.contentFit, props.onLayout);
+  const { pixelWidth, pixelHeight, pending, onLayout } = usePixelTarget(client, asset, requestedPixelWidth, requestedPixelHeight, props.contentFit, props.onLayout);
   useTemplateTintWarning(asset, props.tintColor);
   const statesKey = JSON.stringify(asset.states);
   const requireDescription = accessibilityMode === 'description' && props.accessibilityLabel == null;
@@ -246,6 +250,7 @@ export function AssetlibStateImage<R extends StateSetRef>({ client, asset, arm, 
   if (asset.states.some(name => !Object.prototype.hasOwnProperty.call(fallbacks, name) || fallbacks[name] == null)) throw new Error('Every artwork state requires its own bundled fallback.');
   if (fallbacksDark && asset.states.some(name => !Object.prototype.hasOwnProperty.call(fallbacksDark, name) || fallbacksDark[name] == null)) throw new Error('Every artwork state requires its own dark bundled fallback when fallbacksDark is supplied.');
   useEffect(() => {
+    if (pending) { setResolved(null); return; }
     const controller = new AbortController();
     const images: Record<string, ImageUri> = Object.create(null);
     const accessibility: Record<string, AssetAccessibility | undefined> = Object.create(null);
@@ -282,7 +287,7 @@ export function AssetlibStateImage<R extends StateSetRef>({ client, asset, arm, 
       controller.abort(); release();
       if (currentUris.current === images) currentUris.current = null;
     };
-  }, [client, request]);
+  }, [client, request, pending]);
   const selected = resolved?.request === request ? resolved.images[state] : null;
   const metadata = selected ? resolved!.accessibility[state] : fallbackAccessibility?.[state];
   const fallback = (effectiveAppearance === 'dark' ? fallbacksDark ?? fallbacks : fallbacks)[state];
