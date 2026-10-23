@@ -524,6 +524,8 @@ test('adopt keeps one Assetlib section for coding agents in AGENTS.md, and in CL
   assert.match(section, /description starts with "Assetlib placement" and the key/);
   assert.match(section, /regenerate `src\/assets\.generated\.ts` with `assetlib-codegen`/);
   assert.match(section, /Never create placements in the Assetlib console\./);
+  assert.ok(section.includes('- To see what a placement shows in draft, staging and production, where it is used in code, and its release history, use the Assetlib MCP server (add it with `claude mcp add --transport http assetlib https://console.assetlib.dev/mcp`). Through it you may upload images and assign them to placements as a draft.'));
+  assert.ok(section.endsWith(`- Agents never publish, never create placements or tokens in the console, and never put a token in code or chat.\n${AGENTS_END}\n`));
   assert.equal(await f.get('CLAUDE.md'), `Use pnpm.\n\n${section}`);
 
   // A later adoption replaces the section where it is, keeping what follows; a run with nothing new changes nothing.

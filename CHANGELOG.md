@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.10-preview.1 — October 23, 2026
+
+- `@assetlib/cli` 0.4.7: `init` now tells coding agents how to connect to the workspace's Assetlib MCP server with Claude or Codex, using the public config's origin when present. The section `adopt` and `init` write in `AGENTS.md` also points agents at the MCP server to read placements, code references and release history and to upload and assign images as a draft. Agents never publish; publishing stays in the console. The `init` next steps now use the console's checklist names: "Register your placements", "Run your app" and "Publish an image change". Checked with new `init` and `adopt` tests and `npm run verify`.
+- `@assetlib/sdk-core` and `@assetlib/sdk-expo` change only their version. `@assetlib/audit` 0.2.1 is unchanged.
+
 ## 0.7.9-preview.1 — October 15, 2026
 
 - `@assetlib/cli` 0.4.6: the `AGENTS.md` section `adopt` and `init` write now tells coding agents that art the Assetlib Figma plugin marked is data-supplied imagery whose exact codebase match is the key's generated reference, the two exceptions Figma's design-to-code skill allows to its rule that agents download every image. It says to download Figma's image only as the bundled fallback of a key not yet in the catalog, as it is. Before, it said "don't export the image from Figma" while also asking for a bundled fallback, and for a key not yet in the catalog some agents drew their own fallback instead of keeping the designer's art. Checked on Roam with Claude Code and Figma's skill against replayed Figma MCP responses for two screens, 24 runs (19 with Assetlib's text): all 19 rendered the placement through its reference, while Sonnet with no Assetlib text committed a new placement's art as a static image (2 of 2); with the old wording, 3 of 6 runs on a new key redrew the fallback, with the new section 0 of 4. Also checked with a new `adopt` test and `npm run verify`. To update an existing `AGENTS.md`, replace the text between its `assetlib:start` and `assetlib:end` markers with the section in the CLI README; `adopt` and `init` rewrite it only in a run that adopts an image.

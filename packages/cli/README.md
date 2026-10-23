@@ -4,16 +4,16 @@ Set up an Expo app's integration, register a checked-in Assetlib catalog with th
 
 ## Install
 
-The CLI is on npm as `@assetlib/cli`, a developer preview under the `preview` dist-tag. Install an exact version; release `v0.7.9-preview.1` ships 0.4.6:
+The CLI is on npm as `@assetlib/cli`, a developer preview under the `preview` dist-tag. Install an exact version; release `v0.7.10-preview.1` ships 0.4.7:
 
 ```sh
-npm install --save-dev --save-exact @assetlib/cli@0.4.6
+npm install --save-dev --save-exact @assetlib/cli@0.4.7
 node ./node_modules/@assetlib/cli/bin/assetlib.mjs --help
 ```
 
 Run the installed package's own entry file, as above, and commit the lockfile so `npm ci` checks the package's hash. The unscoped `assetlib` name on npm is not ours: never install it or `npx` it by name, because that would fetch whatever package holds the name and run it beside `ASSETLIB_TOKEN`. The `assetlib` commands below assume this entry file (or an npm script that calls it).
 
-The same package is attached to the GitHub release as a tarball: `npm install --save-dev https://github.com/AssetLib/sdk-js/releases/download/v0.7.9-preview.1/assetlib-cli-0.4.6.tgz` installs it from there; check it against the release's `SHA256SUMS`. From a checkout of this repository, after `npm ci`, run it directly:
+The same package is attached to the GitHub release as a tarball: `npm install --save-dev https://github.com/AssetLib/sdk-js/releases/download/v0.7.10-preview.1/assetlib-cli-0.4.7.tgz` installs it from there; check it against the release's `SHA256SUMS`. From a checkout of this repository, after `npm ci`, run it directly:
 
 ```sh
 node packages/cli/bin/assetlib.mjs --help
@@ -36,7 +36,7 @@ node ./node_modules/@assetlib/cli/bin/assetlib.mjs init --config ~/Downloads/ass
 - On Expo SDK 57 (an `expo` dependency of `57`, `57.x`, `~57` or `^57`) it also writes `plugins/with-ios-scene-lifecycle.js` and adds it to the plugins in `app.config.json` or, without one, `app.json` (with or without an `expo` key). Apps built with Xcode 27 (the iOS 27 SDK) stop at launch unless they adopt the UIScene life cycle, and the SDK 57 iOS template does not. The plugin applies the SDK 58 template's scene setup (a `SceneDelegate`, a single-scene manifest in `Info.plist`, and an app delegate that no longer creates the window) when Expo generates `ios/`, and does nothing on SDK 58 or later. With a dynamic config (`app.config.ts`, `.mts`, `.cts`, `.mjs`, `.cjs` or `.js`), which Expo reads instead, it only tells you to add the plugin there. It keeps an existing plugin file, leaves a config that already declares `UIApplicationSceneManifest` alone, and rechecks the config file just before writing it. If you keep `ios/` in Git, make the plugin's three changes there yourself. On Expo SDK 54 to 56, whose `expo` package has no `ExpoAppSceneDelegate`, it only notes that Xcode 27 builds need Expo SDK 57 or Xcode 26.
 - Like `adopt`, it adds the [section for coding agents](#instructions-for-coding-agents) to `AGENTS.md`. Apart from the adopted call sites, `AGENTS.md` and, on Expo SDK 57, `app.config.json` or `app.json` are the only existing files it may change.
 - It refuses to run when `assetlib.catalog.json` already exists (use `adopt`), needs `expo` in `package.json`, never writes through a symlink or outside the project, and, like `adopt`, never calls Git or the network.
-- It ends with the next steps: install the SDK packages from the same release, add the token secret, run a development build, and publish a change and reload the app. Overview in the console ticks its setup checklist as the first sync, the first manifest request and the first update arrive.
+- It ends with the next steps: install the SDK packages from the same release, add the token secret, connect your coding agent to the workspace's MCP server, run a development build, and publish a change and reload the app. Overview in the console ticks its setup checklist as the first sync, the first manifest request and the first update arrive.
 
 ### Workflows written before CLI 0.4.2
 
@@ -191,7 +191,8 @@ When `adopt` or `init` adopts something, it also adds or updates one section in 
 - To add art that should change after release, add a catalog entry and its bundled fallback image in the same change, then regenerate `src/assets.generated.ts` with `assetlib-codegen` (`assetlib adopt` does both for an existing `Image` call site). CI's `assetlib sync` declares it. Never create placements in the Assetlib console.
 - Never edit `src/assets.generated.ts` by hand; `assetlib check` compares it. Renaming a key creates a new placement, so ask first.
 - Not placements: the app icon, the splash screen, colors, and images that come from user or API data.
-- Agents never upload, publish or create tokens, and never put a token in code or chat.
+- To see what a placement shows in draft, staging and production, where it is used in code, and its release history, use the Assetlib MCP server (add it with `claude mcp add --transport http assetlib https://console.assetlib.dev/mcp`). Through it you may upload images and assign them to placements as a draft.
+- Agents never publish, never create placements or tokens in the console, and never put a token in code or chat.
 <!-- assetlib:end -->
 ```
 

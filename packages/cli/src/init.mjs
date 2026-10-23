@@ -216,8 +216,9 @@ export async function init({ root: requestedRoot, src, images, config: configOpt
   report.next = [
     'Install @assetlib/sdk-core and @assetlib/sdk-expo at one exact version, and @assetlib/cli, from npm or from the same GitHub release as this CLI (see the CLI README). Never install the unscoped assetlib package.',
     ...(ci === 'github' ? ['Store a token with the Declare scope from Settings › Tokens as the ASSETLIB_TOKEN secret of the assetlib-sync environment, with its deployment branches limited to main (GitHub Settings › Environments), or as a repository secret in a private repository on GitHub Free. The first push to main then registers the placements.'] : ['Run assetlib sync in CI on every build (see the CLI README).']),
-    'Run a development build. Overview in the console ticks "Declare placements" after the first sync and "Connect your app" when the build first requests a manifest.',
-    'Publish a change in the console, then reload the app or quit and reopen it. The starter client checks for a new release at launch and whenever the app returns to the foreground, and an image already on screen shows it the next time it mounts. "Update an image without an app release" ticks when the app requests the release.',
+    `Connect your coding agent to this workspace so it can see what each placement shows in draft, staging and production and prepare image changes as a draft: claude mcp add --transport http assetlib ${target ? target.origin : 'https://console.assetlib.dev'}/mcp (Codex: codex mcp add assetlib --url ${target ? target.origin : 'https://console.assetlib.dev'}/mcp, then codex mcp login assetlib), then sign in when it asks. Publishing stays in the console.`,
+    'Run a development build. Overview in the console ticks "Register your placements" after the first sync and "Run your app" when the build first requests a manifest.',
+    'Publish a change in the console, then reload the app or quit and reopen it. The starter client checks for a new release at launch and whenever the app returns to the foreground, and an image already on screen shows it the next time it mounts. "Publish an image change" ticks when the app requests the release.',
   ];
   return report;
 }

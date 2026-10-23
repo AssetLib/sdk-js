@@ -20,7 +20,8 @@ export function agentSection({ catalogFile, generatedFile, example }) {
     `- To add art that should change after release, add a catalog entry and its bundled fallback image in the same change, then regenerate ${generated} with \`assetlib-codegen\` (\`assetlib adopt\` does both for an existing \`Image\` call site). CI's \`assetlib sync\` declares it. Never create placements in the Assetlib console.`,
     `- Never edit ${generated} by hand; \`assetlib check\` compares it. Renaming a key creates a new placement, so ask first.`,
     '- Not placements: the app icon, the splash screen, colors, and images that come from user or API data.',
-    '- Agents never upload, publish or create tokens, and never put a token in code or chat.',
+    '- To see what a placement shows in draft, staging and production, where it is used in code, and its release history, use the Assetlib MCP server (add it with `claude mcp add --transport http assetlib https://console.assetlib.dev/mcp`). Through it you may upload images and assign them to placements as a draft.',
+    '- Agents never publish, never create placements or tokens in the console, and never put a token in code or chat.',
     AGENTS_END,
   ].join('\n') + '\n';
 }

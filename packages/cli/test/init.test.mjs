@@ -52,7 +52,13 @@ test('init is a dry run by default and plans the catalog, client, config and wor
   assert.deepEqual(report.adoption.skipped.map(item => item.reason), ['essential']);
   assert.deepEqual(report.files.map(file => file.path).sort(), ['.github/workflows/assetlib-sync.yml', 'AGENTS.md', 'assetlib.catalog.json', 'assetlib.public.json', 'src/Home.tsx', 'src/assetlib/client.ts', 'src/assets.generated.ts']);
   assert.equal(report.files.find(file => file.path === 'assetlib.catalog.json').created, true);
-  assert.equal(report.next.length, 4);
+  assert.equal(report.next.length, 5);
+  assert.ok(report.next[2].includes('claude mcp add --transport http assetlib https://console.example.com/mcp'));
+  assert.ok(report.next[2].includes('codex mcp add assetlib --url https://console.example.com/mcp, then codex mcp login assetlib'));
+  assert.match(report.next[2], /Publishing stays in the console\./);
+  assert.doesNotMatch(report.next[2], /`/);
+  assert.equal(report.next[3], 'Run a development build. Overview in the console ticks "Register your placements" after the first sync and "Run your app" when the build first requests a manifest.');
+  assert.ok(report.next[4].endsWith('"Publish an image change" ticks when the app requests the release.'));
   assert.deepEqual(await p.files(), original, 'a dry run writes nothing');
   const text = await p.run(['--config', p.configFile], false);
   assert.match(text.stdout, /2 placements; 2 call sites; 7 files would be written\./);
@@ -137,6 +143,7 @@ test('an existing public config is kept: a matching copy is not rewritten and a 
   await p.put('assetlib.public.json', JSON.stringify(config({ environment: 'staging', manifestUrl: `https://console.example.com/api/delivery/${org}/${app}/environments/staging/manifest` })));
   assert.match((await p.run(['--config', p.configFile], false)).stderr, /already exists with different contents/);
   const fromFile = await p.run([]);
+  assert.ok(fromFile.report.next[2].includes('https://console.example.com/mcp'));
   assert.match(fromFile.report.files.find(file => file.path === '.github/workflows/assetlib-sync.yml').diff, new RegExp(`ASSETLIB_ORG: '${org}'`), 'an existing config fills in the workflow');
 });
 
@@ -145,6 +152,9 @@ test('--ci none skips the workflow; an existing workflow is left alone; no confi
   assert.ok(!(await p.run(['--ci', 'none'])).report.files.some(file => file.path.startsWith('.github/')));
   assert.match((await p.run(['--ci', 'gitlab'], false)).stderr, /--ci must be github or none/);
   const bare = await p.run([]);
+  assert.equal(bare.report.next.length, 5);
+  assert.ok(bare.report.next[2].includes('claude mcp add --transport http assetlib https://console.assetlib.dev/mcp'));
+  assert.ok(bare.report.next[2].includes('codex mcp add assetlib --url https://console.assetlib.dev/mcp, then codex mcp login assetlib'));
   const workflow = bare.report.files.find(file => file.path === '.github/workflows/assetlib-sync.yml').diff;
   assert.match(workflow, /ASSETLIB_CONSOLE: \$\{\{ vars\.ASSETLIB_CONSOLE \}\}/);
   assert.ok(bare.report.notes.some(note => note.includes('No public config')));
