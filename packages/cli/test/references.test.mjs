@@ -53,6 +53,17 @@ test('finds literal keys and prefixed symbols while excluding dynamic and genera
   assert.equal(JSON.stringify(result).includes('DO_NOT_SEND_SOURCE'), false);
 });
 
+test('withForms tells a generated symbol from a quoted key, and a line with both counts as a symbol', async t => {
+  const root = await fixture(t);
+  await put(root, 'src/Screen.tsx', ['const key = "travel.coast";', 'const art = AppAssets.Tasks.garden;', 'const both = ["travel.coast", AppAssets.Travel.coast];'].join('\n'));
+  assert.deepEqual((await scan(root, [root], { withForms: true })).codeReferences, [
+    { key: 'travel.coast', path: 'src/Screen.tsx', line: 1, form: 'literal' },
+    { key: 'tasks.garden', path: 'src/Screen.tsx', line: 2, form: 'symbol' },
+    { key: 'travel.coast', path: 'src/Screen.tsx', line: 3, form: 'symbol' },
+  ]);
+  assert.equal((await scan(root)).codeReferences.some(reference => 'form' in reference), false);
+});
+
 test('finds Swift AppArtwork accessors and artwork methods, and Kotlin AppAssets symbols', async t => {
   const root = await fixture(t);
   await put(root, 'ios/ElsewhereApp.swift', [

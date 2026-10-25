@@ -1,19 +1,19 @@
 # @assetlib/cli
 
-Set up an Expo app's integration, register a checked-in Assetlib catalog with the console from an application build, or adopt bundled Expo images into declared placements. Node.js 22 or newer. The CLI pins `typescript` 5.9.3 for AST parsing and `image-size` 2.0.4 for encoded image dimensions.
+Set up an Expo app's integration, register a checked-in Assetlib catalog with the console from an application build, adopt bundled Expo images into declared placements, or map an Expo Router app's routes, navigation and placements. Node.js 22 or newer. The CLI pins `typescript` 5.9.3 for AST parsing and `image-size` 2.0.4 for encoded image dimensions.
 
 ## Install
 
-The CLI is on npm as `@assetlib/cli`, a developer preview under the `preview` dist-tag. Install an exact version; release `v0.7.12-preview.1` ships 0.4.8:
+The CLI is on npm as `@assetlib/cli`, a developer preview under the `preview` dist-tag. Install an exact version; release `v0.7.13-preview.1` ships 0.4.9:
 
 ```sh
-npm install --save-dev --save-exact @assetlib/cli@0.4.8
+npm install --save-dev --save-exact @assetlib/cli@0.4.9
 node ./node_modules/@assetlib/cli/bin/assetlib.mjs --help
 ```
 
 Run the installed package's own entry file, as above, and commit the lockfile so `npm ci` checks the package's hash. The unscoped `assetlib` name on npm is not ours: never install it or `npx` it by name, because that would fetch whatever package holds the name and run it beside `ASSETLIB_TOKEN`. The `assetlib` commands below assume this entry file (or an npm script that calls it).
 
-The same package is attached to the GitHub release as a tarball: `npm install --save-dev https://github.com/AssetLib/sdk-js/releases/download/v0.7.12-preview.1/assetlib-cli-0.4.8.tgz` installs it from there; check it against the release's `SHA256SUMS`. From a checkout of this repository, after `npm ci`, run it directly:
+The same package is attached to the GitHub release as a tarball: `npm install --save-dev https://github.com/AssetLib/sdk-js/releases/download/v0.7.13-preview.1/assetlib-cli-0.4.9.tgz` installs it from there; check it against the release's `SHA256SUMS`. From a checkout of this repository, after `npm ci`, run it directly:
 
 ```sh
 node packages/cli/bin/assetlib.mjs --help
@@ -186,6 +186,37 @@ Scope is intentionally local and bounded: source directories, generated output, 
 
 Width and height are a reference size: they fix the aspect ratio every published image must match and identify the placement; the [Expo README](https://github.com/AssetLib/sdk-js/blob/main/packages/sdk-expo/README.md) describes how the SDK sizes its requests. Adopt records them in encoded pixels, not React Native layout dimensions. Metro bundles `name.png` with every `name@<scale>x.png` beside it (and resolves `require('./name.png')` when only scaled files exist), and the device draws the closest scale, so adopt measures the largest file in that set: for `coast-hero.png` with `coast-hero@2x.png` and `coast-hero@3x.png`, the placement is the `@3x` file's width and height, the sharpest art the app bundles. The plan names the measured file when it is not the one in the `require`. Before committing, review every diff, configure the client with the correct public SDK config, ensure the SDK packages are installed, and run the app's typecheck and visual checks. In particular, review retained platform-specific image props for compatibility with `AssetlibImage`. Adoption never calls Git, commits or stashes, sends a network request, uploads an image, deletes or rewrites image bytes, changes app configuration, removes the original `Image` import or constant, or performs unsupported rewrites.
 
+## Map routes, navigation and placements
+
+`assetlib map` draws an Expo Router app as a graph: its routes, the navigation between them, and the catalog's placements on the routes that render them. It reads source only, inside the project, and prints the graph; nothing is sent anywhere.
+
+```sh
+assetlib map --catalog assetlib.catalog.json
+assetlib map --catalog assetlib.catalog.json --format mermaid > app-flow.mmd
+assetlib map --catalog assetlib.catalog.json --app src/app --src src --src packages/ui
+```
+
+The app directory is `src/app`, then `app`, under the catalog's directory (or `--root`); `--app <dir>` names another. `--src <dir>` (repeatable) selects the directories scanned for placement references and followed as imports; it defaults to the app directory's parent (`src` for `src/app`, the project root for `app`), and the app directory is always included. `--format json` (the default) prints the report described below; `--format mermaid` prints a `flowchart LR` of layouts, routes, placements and edges, which GitHub, Mermaid Live and most editors render. `--json` makes errors and the partial-scan diagnostic JSON, as for `sync`.
+
+Routes follow Expo Router's file conventions: every `.tsx`, `.ts`, `.jsx` or `.js` file under the app directory is a route, `_layout` files are layouts, `index` is its directory's own route, `(group)` segments are dropped from the path, `[param]` and `[...rest]` are kept as written, platform files (`index.ios.tsx`) collapse onto one route, of which only the unsuffixed file is read, and `+not-found` is a route while `+html`, `+native-intent`, `+api`, `+middleware`, `.d.ts` and generated files are not. A route belongs to the nearest `_layout` above it.
+
+| Source | Edge |
+| --- | --- |
+| `<Link href>` and `<Redirect href>` from `expo-router` (by name when the file does not import or declare that name itself) | `literal` for a string, a template whose substitutions each fill a whole segment (`/trip/${id}` is written `/trip/[*]`), or an object with a literal `pathname`; `conditional` for each literal branch of `a ? b : c`, `??` or `\|\|`; `dynamic`, with the file and line only, for anything else; a link to another app or site (`https:`, `mailto:`, `//host`) is not an edge |
+| `router.push`, `router.replace` and `router.navigate` on a value of `useRouter()`, a destructured method, or `router` (from `expo-router`, or by name when the file does not import or declare it otherwise) | the same |
+| `<Stack.Screen name>`, `<Tabs.Screen name>` and `<Drawer.Screen name>` in a layout | `screen`, from the layout to the named file (`index`, `(tabs)` for that group's layout, `trip/[id]`); a name that matches no file is kept with `to: null` |
+| a `Tabs` or `Drawer` layout | `navigator` to every route it holds that no `.Screen` names, since the tab bar or drawer shows them all; a `Stack` reaches only its `index`; `Slot` reaches nothing |
+
+An href starting with `.` resolves against the current route as a URL does (`./article` from `/blog/post` is `/blog/article`); a bare name is absolute; a query or fragment is dropped; group segments in an href are ignored. A target goes to the route with the most static segments, so `/trip/new` beats `/trip/[id]`; one that matches no route keeps its target with `to: null`. A route with no incoming edge from another node and no registration is `unlinked`: nothing the scan found leads to it, though a deep link or a typed URL still can. The entry route `/` and `+not-found` are never unlinked.
+
+Placement references use the same matcher as `sync` and are attributed through the code that renders them. A generated symbol (`AppAssets.Travel.coast`) in a route file belongs to that route. In any other file it belongs to the routes that import the function or constant it sits in, directly, through a re-export (`export { default } from '../screens/Travel'`) or as part of a namespace import, following relative imports and the `@/` alias (`compilerOptions.paths` in the root's `tsconfig.json`; without one, `src` beside `src/app`, else the root) through at most 3 files; a file that only lends a route its colors credits it with nothing. A quoted key (`'travel.coast'`) is listed under `mentions` with its file and line and attributes nothing, so a list of key strings on a settings screen is not usage. A symbol no route reaches is `unattributed`, and a placement no route or layout renders counts in `unroutedPlacements`. Names are matched as written, without type information, so a local that shadows an import is followed as the import would be.
+
+The JSON report has `schemaVersion` 1, `app`, `routes` (each with `route`, `file`, `kind` `route` or `layout`, `groups`, `layout`, `entry` and `unlinked` for routes, `navigators` for layouts, and `placements` with `key`, `file`, `line` and the `via` import chain), `edges` (`from`, `to`, `target`, `kind`, `call`, `file`, `line`, `via`), `placements` (`key`, `routes`, `layouts`), `mentions`, `unattributed`, `summary`, `partial` and `issues`. Files are relative to the root with `/` separators. No source text appears in it.
+
+Not handled, and not guessed: hrefs built from variables or partial templates (recorded as `dynamic`), apps on React Navigation without Expo Router, path aliases other than `@/`, the suffixed files of a platform set (`index.ios.tsx` beside `index.tsx`, or `Foo.native.tsx` as an import target), `initialRouteName` and `href: null` settings, and the children a bare `Stack` reaches by name.
+
+The walk and the parse are bounded like the reference scan: the same excluded directories, no symlinks, 32 directory levels, 20,000 entries, 500 files, 256 KiB per file and 2 MiB in total, plus the reference scan's own budget. A budget hit, an unreadable file or an import through a symlink is an issue: the report is still printed, a diagnostic goes to stderr, and the exit code is 2.
+
 ## Instructions for coding agents
 
 When `adopt` or `init` adopts something, it also adds or updates one section in `AGENTS.md` beside the catalog, between `<!-- assetlib:start -->` and `<!-- assetlib:end -->`, and creates `AGENTS.md` when it is missing. Coding agents that read the repository then know where the catalog is, render placements with `AssetlibImage` and the generated reference (or through the app's own image component inside `AssetlibPlacement`), and add a placement in the catalog with a bundled fallback instead of in the console. They also render the placement instead of a downloaded copy when they build a screen from Figma, including with Figma's design-to-code skill, and download Figma's image only as the bundled fallback of a key not yet in the catalog: the Assetlib Figma plugin inserts placement art as a component whose description starts with "Assetlib placement" and the key, which Figma's MCP server passes to the agent.
@@ -247,11 +278,11 @@ References are deduplicated and selected in sorted POSIX path order, up to 200 t
 | --- | --- |
 | `0` | Completed successfully within the selected scope. |
 | `1` | Invalid arguments/catalog, stale generated file, network failure, rejected server response, or HTTP error. HTTP errors include the server message. |
-| `2` | Completed with a partial reference scan; inspect stderr for limits or unreadable paths. |
+| `2` | Completed with a partial scan: `sync`'s reference scan or `map`'s route scan hit a limit or an unreadable path; inspect stderr. |
 | `3` | `adopt` found no new supported call sites, or `init` found no image it could adopt. No files changed. |
 
 A placement someone requested in the console with the same key, width, height, states, default state, variants and rendering becomes declared by the build; a different contract is reported as conflicting, and the console keeps its own. A request error takes precedence over the partial-scan exit code. Re-registering the same platform, app version, and build number replaces that build's declarations and references; created, existing, and conflicting placements are summarized. Conflicts are reported without changing the exit code by themselves.
 
 ## Verification
 
-Run `npm run verify` from the repository root. Tests include the shared hash vector, core-codegen parity, scanner limits, CI metadata, dry-run, generated-file checks, AST adoption and skip reasons, collision/reuse cases, diff replay, read-only snapshots, apply/idempotence, and real local `node:http` servers for registration and error responses. These HTTP tests require permission to listen on loopback; a sandbox that blocks listening reports failures rather than silently skipping them.
+Run `npm run verify` from the repository root. Tests include the shared hash vector, core-codegen parity, scanner limits, CI metadata, dry-run, generated-file checks, AST adoption and skip reasons, collision/reuse cases, diff replay, read-only snapshots, apply/idempotence, the map's route naming, edge patterns, attribution and budgets, and real local `node:http` servers for registration and error responses. These HTTP tests require permission to listen on loopback; a sandbox that blocks listening reports failures rather than silently skipping them.

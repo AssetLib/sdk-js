@@ -6,6 +6,7 @@ import { detectBuildMetadata } from './detection.mjs';
 import { scanReferences } from './references.mjs';
 import { adopt, formatAdoption } from './adopt.mjs';
 import { formatInit, init } from './init.mjs';
+import { formatMermaid, map } from './map.mjs';
 
 const HELP = `Usage:
   assetlib init [--project <dir>] [--src <dir>]... [--image <file>]... [--config <public-config.json>]
@@ -17,10 +18,11 @@ const HELP = `Usage:
   assetlib check --catalog <path> --generated <path>
   assetlib adopt --catalog <path> --src <dir> [--src <dir>]...
     [--generated <path>] [--client-import "<module>#<export>"] [--min-edge <px>] [--apply] [--json]
+  assetlib map --catalog <path> [--app <dir>] [--root <dir>] [--src <dir>]... [--format json|mermaid] [--json]
 
 ASSETLIB_TOKEN supplies the sync token; ASSETLIB_CONSOLE, ASSETLIB_ORG, and ASSETLIB_APP supply defaults.
 Sync requires HTTPS; --allow-insecure-loopback permits HTTP only for localhost, 127.0.0.1, or [::1].
-Exit codes: 0 success, 1 error or generated-file mismatch, 2 partial reference scan, 3 nothing to adopt.
+Exit codes: 0 success, 1 error or generated-file mismatch, 2 partial scan (sync, map), 3 nothing to adopt.
 `;
 const optionsByCommand = {
   sync: ['catalog', 'platform', 'app-version', 'build-number', 'references', 'root', 'console', 'org', 'app', 'sdk-version', 'allow-insecure-loopback', 'dry-run', 'json'],
@@ -28,11 +30,12 @@ const optionsByCommand = {
   check: ['catalog', 'generated'],
   adopt: ['catalog', 'src', 'generated', 'client-import', 'min-edge', 'apply', 'json'],
   init: ['project', 'src', 'image', 'config', 'generated', 'client-import', 'min-edge', 'ci', 'apply', 'json'],
+  map: ['catalog', 'app', 'root', 'src', 'format', 'json'],
 };
 
 function parseArgs(args) {
   const [command, ...rest] = args;
-  if (!optionsByCommand[command]) throw new Error('Expected init, sync, hash, check, or adopt. Use --help.');
+  if (!optionsByCommand[command]) throw new Error('Expected init, sync, hash, check, adopt, or map. Use --help.');
   const options = { references: [], src: [], image: [] };
   for (let i = 0; i < rest.length; i++) {
     const match = /^--([^=]+)(?:=(.*))?$/.exec(rest[i]);
@@ -143,6 +146,18 @@ export async function main(args = process.argv.slice(2), env = process.env, io =
       if (options.json) json(report);
       else write(formatAdoption(report));
       return report.summary.candidates ? 0 : 3;
+    }
+    if (command === 'map') {
+      if (options.format !== undefined && !['json', 'mermaid'].includes(options.format)) throw new Error('--format must be json or mermaid.');
+      const report = await map({ catalog, catalogPath, root: options.root, app: options.app, src: options.src });
+      // Diagnostics stay off stdout so the report is the whole body in either format.
+      if (report.partial) {
+        const warning = { warning: 'Route scan was partial; routes, edges and references may be missing.', issues: report.issues };
+        io.stderr.write(redact(options.json ? JSON.stringify(warning) + '\n' : warning.warning + '\n' + report.issues.slice(0, 10).map(issue => `  ${issue.path}: ${issue.reason}`).join('\n') + '\n'));
+      }
+      if (options.format === 'mermaid') write(formatMermaid(report));
+      else json(report);
+      return report.partial ? 2 : 0;
     }
     if (command === 'hash') { write(catalogHash(catalog) + '\n'); return 0; }
     if (command === 'check') {

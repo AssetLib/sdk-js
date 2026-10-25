@@ -4,7 +4,7 @@ import path from 'node:path';
 
 // Keep these scopes and budgets aligned with packages/audit/src/audit.mjs.
 const SOURCE_EXTENSIONS = new Set(['.swift', '.m', '.mm', '.h', '.kt', '.java', '.xml', '.dart', '.js', '.jsx', '.mjs', '.cjs', '.ts', '.tsx', '.json', '.html', '.css', '.scss']);
-const IGNORED_DIRECTORIES = new Set(['node_modules', 'vendor', 'Vendor', 'Pods', 'Carthage', 'build', 'Build', 'dist', 'out', 'coverage', 'DerivedData', 'target', 'graft']);
+export const IGNORED_DIRECTORIES = new Set(['node_modules', 'vendor', 'Vendor', 'Pods', 'Carthage', 'build', 'Build', 'dist', 'out', 'coverage', 'DerivedData', 'target', 'graft']);
 const LIMITS = Object.freeze({ entries: 20000, files: 500, fileBytes: 256 * 1024, totalBytes: 2 * 1024 * 1024, depth: 32, references: 200 });
 const compare = (a, b) => a < b ? -1 : a > b ? 1 : 0;
 const slash = value => value.split(path.sep).join('/');
@@ -18,7 +18,7 @@ const escapeRegex = value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 // As in the audit, do not follow links and reject files that change during a read.
 // The checkout should be quiescent; this is not a sandbox for hostile filesystems.
-async function readBounded(root, file, limit) {
+export async function readBounded(root, file, limit) {
   if (!contained(root, file) || await realpath(file) !== file) throw new Error('symlink_or_outside_root');
   const handle = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
@@ -41,8 +41,9 @@ async function readBounded(root, file, limit) {
   }
 }
 
-/** Location hints only: source contents are never returned or sent to the console. */
-export async function scanReferences({ catalog, references = [], root: rootOption, catalogPath }) {
+/** Location hints only: source contents are never returned or sent to the console.
+ * With `withForms: true` each reference also says whether it matched a generated symbol or a quoted key; sync never asks. */
+export async function scanReferences({ catalog, references = [], root: rootOption, catalogPath, withForms = false }) {
   const result = { codeReferences: [], partial: false, issues: [] };
   if (!references.length) return result;
   const requestedRoot = path.resolve(rootOption ?? path.dirname(path.resolve(catalogPath)));
@@ -140,18 +141,19 @@ export async function scanReferences({ catalog, references = [], root: rootOptio
     bytesRead += buffer.length;
     const lines = buffer.toString('utf8').split(/\r?\n/);
     for (let index = 0; index < lines.length; index++) {
-      const found = new Set();
+      // A line that holds both a quoted key and a symbol counts as a symbol reference.
+      const found = new Map();
       for (const match of lines[index].matchAll(/(["'`])([^"'`\r\n\\]{1,512})\1/g)) {
-        if (keys.has(match[2])) found.add(match[2]);
+        if (keys.has(match[2])) found.set(match[2], found.get(match[2]) ?? 'literal');
       }
-      for (const symbol of symbols) if (symbol.pattern.test(lines[index])) found.add(symbol.key);
-      for (const key of [...found].sort(compare)) {
+      for (const symbol of symbols) if (symbol.pattern.test(lines[index])) found.set(symbol.key, 'symbol');
+      for (const key of [...found.keys()].sort(compare)) {
         if (index + 1 > 1000000) { issue(file, 'reference_line_limit'); continue; }
         if (result.codeReferences.length === LIMITS.references) {
           issue(file, 'reference_limit');
           return result;
         }
-        result.codeReferences.push({ key, path: relative, line: index + 1 });
+        result.codeReferences.push({ key, path: relative, line: index + 1, ...(withForms ? { form: found.get(key) } : {}) });
       }
     }
   }
