@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { PixelRatio, useColorScheme } from 'react-native';
 import { Image, type ImageProps } from 'expo-image';
 import { createAssetClient, parsePublicConfig, resolveAccessibilityDescription, type AssetAccessibility, type AssetClient, type AssetlibConfig, type AssetRef, type AssetStatus, type CachePolicy, type ClientOptions, type DynamicAssetRef, type ResolvedAsset, type StateSetRef } from '@assetlib/sdk-core';
@@ -145,8 +145,10 @@ function useRendererKey(request: object, source: unknown, state?: string): numbe
   return useMemo(() => ++generation.current, [request, source, state]);
 }
 
-function matchesLoadedSource(event: Parameters<NonNullable<ImageProps['onLoad']>>[0], uri: string): boolean {
-  return event?.source?.url === undefined || event.source.url === uri;
+/** expo-image reports `source.url`; React Native's Image reports `nativeEvent.source.uri`. An event naming another source is stale. */
+function matchesLoadedSource(event: Parameters<NonNullable<ImageProps['onLoad']>>[0] | undefined, uri: string): boolean {
+  const loaded = event?.source?.url ?? (event as { nativeEvent?: { source?: { uri?: string } } } | undefined)?.nativeEvent?.source?.uri;
+  return loaded === undefined || loaded === uri;
 }
 
 /** A request token hides the previous asset immediately when a recycled view changes identity. */
@@ -219,6 +221,47 @@ export function AssetlibImage<R extends AssetRef>({ client, asset, arm, fallback
   const request = useMemo(() => ({}), [client, asset.key, asset.width, asset.height, asset.rendering, arm, revision, pixelWidth, pixelHeight, cachePolicy, requireDescription, effectiveAppearance]);
   const image = useResolvedImage(client, asset, request, signal => client.resolve(asset, { pixelWidth, pixelHeight, cachePolicy, appearance: effectiveAppearance, arm, signal }), effectiveAppearance === 'dark' ? fallbackDark ?? fallback : fallback, fallbackAccessibility, requireDescription, onStatus, pending);
   return <Image {...props} key={image.rendererKey} {...accessibilityProps(props, accessibilityMode, image.accessibility, accessibilityLocale)} cachePolicy="none" source={image.source} onLayout={onLayout} onLoad={event => { image.loaded(event); onLoad?.(event); }} onError={event => { image.fail(); onError?.(event); }} />;
+}
+
+/** What `AssetlibPlacement` hands to its child: the placement's current source and the image callbacks that keep it current. */
+export type AssetlibPlacementImage<F extends ImageSource = ImageSource> = {
+  /** The verified image once it is ready; before that, and after any failure, the bundled fallback as you passed it. */
+  source: F | { uri: string };
+  /** Pass to the image your component renders so its display is reported once. */
+  onLoad: (event?: unknown) => void;
+  /** Pass to the image your component renders so a decode failure returns to the bundled fallback. */
+  onError: (event?: unknown) => void;
+  /** Pass to the image your component renders so its layout picks the rendition tier; until then the reference size × PixelRatio is requested. */
+  onLayout: NonNullable<ImageProps['onLayout']>;
+  /** Spread onto the image: with `accessibilityMode="description"` the delivered or bundled description, with `"decorative"` the props that hide it. */
+  accessibility: Partial<Pick<ImageProps, 'accessible' | 'accessibilityLabel' | 'accessibilityElementsHidden' | 'importantForAccessibility' | 'aria-hidden'>>;
+  /** The placement's `tintColor`, for a tintable icon. */
+  tintColor?: string;
+};
+export type AssetlibPlacementProps<R extends AssetRef = AssetRef, F extends ImageSource = ImageSource> = {
+  client: AssetClient; asset: R; arm?: string; fallback: F; fallbackDark?: F; fallbackAccessibility?: AssetAccessibility;
+  revision?: number; pixelWidth?: number; pixelHeight?: number; cachePolicy?: CachePolicy; appearance?: 'light' | 'dark' | 'system';
+  accessibilityMode?: 'description' | 'decorative'; accessibilityLocale?: string; accessibilityLabel?: string;
+  /** How your component fits the image, so a forwarded `onLayout` picks the tier the same way `AssetlibImage` does. */
+  contentFit?: ImageProps['contentFit']; tintColor?: string; onStatus?: (status: AssetStatus) => void;
+  children: (image: AssetlibPlacementImage<F>) => ReactNode;
+} & TemplateTint<R>;
+
+/**
+ * A placement rendered by your own image component: the child function receives the current source and callbacks
+ * instead of an `Image`. The subtree is not remounted when the source changes (the component may hold a form or a
+ * list), so a load event is attributed by the source it names instead.
+ */
+export function AssetlibPlacement<R extends AssetRef, F extends ImageSource>({ client, asset, arm, fallback, fallbackDark, appearance = 'system', fallbackAccessibility = asset.bundledAccessibility, accessibilityMode, accessibilityLocale, accessibilityLabel, revision = 0, pixelWidth: requestedPixelWidth, pixelHeight: requestedPixelHeight, cachePolicy, contentFit, tintColor, onStatus, children }: AssetlibPlacementProps<R, F>) {
+  const effectiveAppearance = useEffectiveAppearance(appearance);
+  // The child's layout is seen only when it forwards onLayout, so the request never waits for one.
+  const { pixelWidth, pixelHeight, onLayout } = usePixelTarget(client, asset, requestedPixelWidth, requestedPixelHeight, contentFit, undefined);
+  useTemplateTintWarning(asset, tintColor);
+  const requireDescription = accessibilityMode === 'description' && accessibilityLabel == null;
+  const request = useMemo(() => ({}), [client, asset.key, asset.width, asset.height, asset.rendering, arm, revision, pixelWidth, pixelHeight, cachePolicy, requireDescription, effectiveAppearance]);
+  const image = useResolvedImage(client, asset, request, signal => client.resolve(asset, { pixelWidth, pixelHeight, cachePolicy, appearance: effectiveAppearance, arm, signal }), effectiveAppearance === 'dark' ? fallbackDark ?? fallback : fallback, fallbackAccessibility, requireDescription, onStatus);
+  const accessibility = accessibilityProps({ accessibilityLabel } as ImageProps, accessibilityMode, image.accessibility, accessibilityLocale);
+  return <>{children({ source: image.source as F | { uri: string }, onLoad: event => image.loaded(event as Parameters<NonNullable<ImageProps['onLoad']>>[0]), onError: () => image.fail(), onLayout, accessibility, tintColor })}</>;
 }
 
 /** Runtime references come from this client's verified collection page, never from an arbitrary URL. */

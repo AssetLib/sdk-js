@@ -1013,3 +1013,37 @@ test('a template reference without tintColor warns once per placement in develop
     delete globalThis.__DEV__;
   }
 });
+
+test('AssetlibPlacement hands a custom component the placement source, resolves at once, reports displays and returns to the fallback on decode failure', async () => {
+  harness();
+  const calls = [], displays = [], fallbackReasons = [];
+  let pending = deferred();
+  const client = { reportDisplay(_asset, result) { displays.push(result.assetId); }, reportFallback(_asset, _result, reason) { fallbackReasons.push(reason); }, config, resolve: (_asset, options) => { calls.push([options.pixelWidth, options.pixelHeight]); return pending.promise; } };
+  let mounts = 0;
+  class Custom extends React.Component { componentDidMount() { mounts++; } render() { return null; } }
+  const asset = { key: 'home.hero', width: 100, height: 75, bundledAccessibility: description('Bundled hero') };
+  let view;
+  await act(async () => { view = create(React.createElement(adapter.AssetlibPlacement, { client, asset, fallback: 1, tintColor: '#1f1f1f', accessibilityMode: 'description', children: image => React.createElement(Custom, image) })); });
+  const custom = () => view.root.findByType(Custom).props;
+  assert.deepEqual(calls, [[501, 376]], 'Resolves at the reference size times the display scale without waiting for a layout.');
+  assert.equal(custom().source, 1); assert.equal(custom().tintColor, '#1f1f1f'); assert.deepEqual(custom().accessibility, { accessibilityLabel: 'Bundled hero', accessible: true }); assert.equal(mounts, 1);
+  await act(async () => { pending.resolve({ ...resolved(), accessibility: description('Remote hero') }); });
+  assert.deepEqual(custom().source, { uri: 'verified:a' }); assert.equal(custom().accessibility.accessibilityLabel, 'Remote hero');
+  assert.equal(mounts, 1, 'The subtree is not remounted when the source changes.');
+  await act(async () => { custom().onLoad({ nativeEvent: { source: { uri: 'verified:stale' } } }); });
+  assert.deepEqual(displays, [], 'A React Native load event for another source is stale.');
+  await act(async () => { custom().onLoad({ source: { url: 'verified:a' } }); custom().onLoad(); });
+  assert.deepEqual(displays, ['a'], 'One display per resolved image, whatever the event shape.');
+  pending = deferred();
+  await act(async () => { custom().onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 600, height: 450 } } }); });
+  assert.deepEqual(calls.at(-1), [1003, 753], 'A forwarded layout upgrades the tier.');
+  assert.equal(custom().source, 1, 'A new request shows the fallback until it resolves.');
+  await act(async () => { pending.resolve({ ...resolved('b'), accessibility: description('Remote b') }); });
+  assert.deepEqual(custom().source, { uri: 'verified:b' });
+  await act(async () => { custom().onError({ error: 'decode' }); });
+  assert.deepEqual(fallbackReasons, ['decode']); assert.equal(custom().source, 1); assert.equal(custom().accessibility.accessibilityLabel, 'Bundled hero');
+  await act(async () => { view.update(React.createElement(adapter.AssetlibPlacement, { client, asset, fallback: 1, tintColor: '#1f1f1f', accessibilityMode: 'decorative', children: image => React.createElement(Custom, image) })); });
+  assert.deepEqual(custom().accessibility, { accessible: false, accessibilityLabel: undefined, accessibilityElementsHidden: true, importantForAccessibility: 'no-hide-descendants', 'aria-hidden': true }, 'Decorative mode hands out the props that hide the image.');
+  assert.equal(mounts, 1);
+  await act(async () => { view.unmount(); });
+});

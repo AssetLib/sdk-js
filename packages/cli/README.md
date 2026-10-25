@@ -4,16 +4,16 @@ Set up an Expo app's integration, register a checked-in Assetlib catalog with th
 
 ## Install
 
-The CLI is on npm as `@assetlib/cli`, a developer preview under the `preview` dist-tag. Install an exact version; release `v0.7.10-preview.1` ships 0.4.7:
+The CLI is on npm as `@assetlib/cli`, a developer preview under the `preview` dist-tag. Install an exact version; release `v0.7.12-preview.1` ships 0.4.8:
 
 ```sh
-npm install --save-dev --save-exact @assetlib/cli@0.4.7
+npm install --save-dev --save-exact @assetlib/cli@0.4.8
 node ./node_modules/@assetlib/cli/bin/assetlib.mjs --help
 ```
 
 Run the installed package's own entry file, as above, and commit the lockfile so `npm ci` checks the package's hash. The unscoped `assetlib` name on npm is not ours: never install it or `npx` it by name, because that would fetch whatever package holds the name and run it beside `ASSETLIB_TOKEN`. The `assetlib` commands below assume this entry file (or an npm script that calls it).
 
-The same package is attached to the GitHub release as a tarball: `npm install --save-dev https://github.com/AssetLib/sdk-js/releases/download/v0.7.10-preview.1/assetlib-cli-0.4.7.tgz` installs it from there; check it against the release's `SHA256SUMS`. From a checkout of this repository, after `npm ci`, run it directly:
+The same package is attached to the GitHub release as a tarball: `npm install --save-dev https://github.com/AssetLib/sdk-js/releases/download/v0.7.12-preview.1/assetlib-cli-0.4.8.tgz` installs it from there; check it against the release's `SHA256SUMS`. From a checkout of this repository, after `npm ci`, run it directly:
 
 ```sh
 node packages/cli/bin/assetlib.mjs --help
@@ -125,7 +125,7 @@ assetlib adopt --catalog assetlib.catalog.json --src src --apply
 
 The default is read-only: it prints candidate, skipped, and collision counts plus a unified diff for **every** planned file, including generated output and a missing client stub. `--json` returns that same plan as JSON (`summary`, `candidates`, `skipped`, `collisions`, `issues`, `files[].diff`, and `notes`). `--apply` validates the whole plan and checks for concurrent file changes before writing it. Exit 0 means at least one call site was adopted or could be adopted; exit 3 means nothing new was found. A second run after applying reports nothing new. Scan limits and unreadable files are reported in `issues`; review them even when candidates were found.
 
-The TypeScript compiler API parses `.tsx`, `.jsx`, `.ts`, and `.js` with JSX enabled. Two patterns are supported, when the JSX tag is the named `Image` import from `react-native` or `expo-image`:
+The TypeScript compiler API parses `.tsx`, `.jsx`, `.ts`, and `.js` with JSX enabled. Two source patterns are supported, when the JSX tag is the `Image` import (aliased or not) from `react-native` or `expo-image`:
 
 ```tsx
 import { Image } from 'react-native';
@@ -142,7 +142,23 @@ The second pattern requires a module-level `const` with exactly one use in that 
   fallback={require('../assets/coast-hero.png')} style={styles.hero} />
 ```
 
-For identifier sources, `fallback={hero}` and the original constant are retained. The original `Image` import is retained even if unused. Imports for `AssetlibImage`, `AppAssets`, and the client are reused where possible or added with collision-safe aliases; directives such as `'use client'` remain first.
+For identifier sources, `fallback={hero}` and the original constant are retained. The original `Image` import is retained even if unused. Imports for `AssetlibImage`, `AssetlibPlacement`, `AppAssets`, and the client are reused where possible or added with collision-safe aliases; directives such as `'use client'` remain first.
+
+The placement belongs where the artwork is chosen, so the same two source patterns are adopted when the tag is the app's own image component: an import from any other module, a component declared at module scope in the same file, or a member such as `Animated.Image`. The component keeps rendering as it is, with every prop it had, and the call site is wrapped in `AssetlibPlacement` (`@assetlib/sdk-expo` 0.7.12-preview.1 or newer), which hands it the placement's current source:
+
+```tsx
+import { AppImage } from '../components/AppImage';
+
+<AppImage source={require('../assets/coast-hero.png')} style={styles.hero} />
+```
+
+becomes
+
+```tsx
+<AssetlibPlacement client={client} asset={AppAssets.Travel.coastHero} fallback={require('../assets/coast-hero.png')}>{placement => <AppImage source={placement.source} style={styles.hero} />}</AssetlibPlacement>
+```
+
+A `key` prop is repeated on `AssetlibPlacement`, so list items stay keyed. The child parameter is `placement`, or `placement2` and so on when the file already uses that name. The component's own `cachePolicy` is left alone. `ImageBackground` from `react-native` or `expo-image` and `Animated.Image` are known to take an image's callbacks, so they also receive `onLoad`, `onError` and `onLayout` from the placement unless the element sets them. The plan notes the other call sites: when the component forwards `onLoad`, `onError` and `onLayout` to its image, also pass `placement.onLoad`, `placement.onError` and `placement.onLayout`, so displays are reported, a failed decode returns to the bundled image, and the image's layout picks the rendition size; see [your own image component](https://github.com/AssetLib/sdk-js/blob/main/packages/sdk-expo/README.md#your-own-image-component) in the Expo README. A tag that is a parameter, a local variable, or an unresolved name is skipped with reason `image-not-imported`.
 
 `TravelScreen.tsx` and `coast-hero.png` become key `travel.coast-hero`, symbol `['Travel', 'coastHero']`, and screen `travel`. A density suffix is not part of the key: `coast-hero.png`, `coast-hero@2x.png` and `coast-hero@3x.png` are one image and one placement. A matching existing key with the same dimensions reuses its existing symbol. Different dimensions are a conflict and are skipped. Distinct images that collide on a key or symbol receive `-2`, `-3`, and corresponding identifier suffixes, reported in the plan; repeat uses of the same image and key share a placement. Invalid names, dimensions outside 1–8192, and additions beyond the catalog's 100-placement limit are skipped. Existing catalog entries are preserved. If every existing placement occupies one line, new placements also occupy one line with the existing indentation and the surrounding file formatting is retained; otherwise the catalog uses expanded JSON with two-space indentation. The CLI generator refreshes the generated file.
 
@@ -156,7 +172,7 @@ Skipped image requires include the following reasons, each with `path:line`:
 | `template-string`, `dynamic-path` | The require argument is a template or computed expression. |
 | `conditional-expression`, `non-jsx-call`, `unsupported-source` | Conditional, helper-call, or other unsupported source expression. |
 | `multiple-uses`, `unused-identifier`, `non-module-const` | The constant pattern cannot be established unambiguously. |
-| `image-not-imported`, `shadowed-require`, `attribute-conflict` | The tag or require is locally shadowed/unsupported, or replacement would conflict with existing props. |
+| `image-not-imported`, `shadowed-require`, `attribute-conflict` | The tag is neither `Image` from `react-native` or `expo-image` nor an imported or module-scope component (a parameter, local variable or unresolved name), the require is locally shadowed, or replacement would conflict with existing props. |
 | `cache-policy` | The cache policy is not a supported string literal, or is duplicated. |
 | `spread-attributes` | A JSX spread could override the rewritten component's delivery props. |
 | `icon-sized` | Both edges at 1× (encoded pixels divided by the file's `@<scale>x`) are below `--min-edge` (default 64; allowed 1–8192). |
@@ -172,7 +188,7 @@ Width and height are a reference size: they fix the aspect ratio every published
 
 ## Instructions for coding agents
 
-When `adopt` or `init` adopts something, it also adds or updates one section in `AGENTS.md` beside the catalog, between `<!-- assetlib:start -->` and `<!-- assetlib:end -->`, and creates `AGENTS.md` when it is missing. Coding agents that read the repository then know where the catalog is, render placements with `AssetlibImage` and the generated reference, and add a placement in the catalog with a bundled fallback instead of in the console. They also render the placement instead of a downloaded copy when they build a screen from Figma, including with Figma's design-to-code skill, and download Figma's image only as the bundled fallback of a key not yet in the catalog: the Assetlib Figma plugin inserts placement art as a component whose description starts with "Assetlib placement" and the key, which Figma's MCP server passes to the agent.
+When `adopt` or `init` adopts something, it also adds or updates one section in `AGENTS.md` beside the catalog, between `<!-- assetlib:start -->` and `<!-- assetlib:end -->`, and creates `AGENTS.md` when it is missing. Coding agents that read the repository then know where the catalog is, render placements with `AssetlibImage` and the generated reference (or through the app's own image component inside `AssetlibPlacement`), and add a placement in the catalog with a bundled fallback instead of in the console. They also render the placement instead of a downloaded copy when they build a screen from Figma, including with Figma's design-to-code skill, and download Figma's image only as the bundled fallback of a key not yet in the catalog: the Assetlib Figma plugin inserts placement art as a component whose description starts with "Assetlib placement" and the key, which Figma's MCP server passes to the agent.
 
 - `CLAUDE.md` gets the same section when it exists and does not import `AGENTS.md` with `@AGENTS.md`. A missing `CLAUDE.md` is not created.
 - Text outside the markers is kept. A later run replaces the section where it is, and the dry run shows its diff like any other file.
@@ -186,9 +202,9 @@ When `adopt` or `init` adopts something, it also adds or updates one section in 
 `assetlib adopt` keeps this section up to date; edit outside its markers. Images declared in `assetlib.catalog.json` are Assetlib placements: they can change after the app is released, and the bundled image is the fallback.
 
 - Read `assetlib.catalog.json` before adding or changing artwork.
-- Render a placement with `AssetlibImage` from `@assetlib/sdk-expo` and its generated reference, for example `asset={AppAssets.Travel.coastHero}` for `travel.coast-hero`, with the bundled image as `fallback`. Never point an `Image` at a placement's file instead.
+- Render a placement with `AssetlibImage` from `@assetlib/sdk-expo` and its generated reference, for example `asset={AppAssets.Travel.coastHero}` for `travel.coast-hero`, with the bundled image as `fallback`. When a screen draws artwork through the app's own image component, keep that component and wrap the call site in `AssetlibPlacement`, which hands it `placement.source`. Never point an `Image` at a placement's file instead.
 - In Figma, art inserted by the Assetlib plugin is a component whose description starts with "Assetlib placement" and the key, and whose layer name starts with the key. When you build a screen from Figma, including with Figma's design-to-code skill, treat that art as data-supplied imagery whose exact codebase match is the key's generated reference, and render it with that reference. Download the image only when the key isn't in the catalog yet, as its bundled fallback, and use Figma's image as it is rather than redrawing it.
-- To add art that should change after release, add a catalog entry and its bundled fallback image in the same change, then regenerate `src/assets.generated.ts` with `assetlib-codegen` (`assetlib adopt` does both for an existing `Image` call site). CI's `assetlib sync` declares it. Never create placements in the Assetlib console.
+- To add art that should change after release, add a catalog entry and its bundled fallback image in the same change, then regenerate `src/assets.generated.ts` with `assetlib-codegen` (`assetlib adopt` does both for an existing image call site). CI's `assetlib sync` declares it. Never create placements in the Assetlib console.
 - Never edit `src/assets.generated.ts` by hand; `assetlib check` compares it. Renaming a key creates a new placement, so ask first.
 - Not placements: the app icon, the splash screen, colors, and images that come from user or API data.
 - To see what a placement shows in draft, staging and production, where it is used in code, and its release history, use the Assetlib MCP server (add it with `claude mcp add --transport http assetlib https://console.assetlib.dev/mcp`). Through it you may upload images and assign them to placements as a draft.

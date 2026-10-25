@@ -608,3 +608,52 @@ test('the CLI README shows the agent section exactly as adopt writes it', async 
   assert.equal(shown, agentSection({ catalogFile: 'assetlib.catalog.json', generatedFile: 'src/assets.generated.ts',
     example: { key: 'travel.coast-hero', symbol: ['Travel', 'coastHero'] } }));
 });
+
+test('wraps the app\'s own image component in AssetlibPlacement at the call site, keeps it as it is, and typechecks', async t => {
+  const f = await fixture(t);
+  await f.put('src/assetlib/client.ts', `import type { AssetClient } from '@assetlib/sdk-core';\nexport declare const client: AssetClient;\n`);
+  await f.put('src/components/AppImage.tsx', `import { Image, type ImageProps } from 'expo-image';\nexport function AppImage(props: ImageProps) { return <Image {...props} />; }\nexport const Frames = { Photo: AppImage };\n`);
+  await f.put('src/WrapScreen.tsx', `import type { ReactNode } from 'react';
+import { Animated, Image as RNImage, ImageBackground, Text, View } from 'react-native';
+import type { ImageProps } from 'expo-image';
+import { AppImage, Frames } from './components/AppImage';
+const placement = 'taken';
+function Local(props: { source: ImageProps['source']; children?: ReactNode }) { return <View>{String(props.source)}{props.children}</View>; }
+export const Screen = ({ items, rest }: { items: { id: string }[]; rest: ImageProps }) => <View>
+  <AppImage source={require('../assets/coast-hero.png')} style={{ width: 90 }} cachePolicy="memory-disk" />
+  <Local source={require('../assets/coast-hero.png')}><View /></Local><Frames.Photo source={require('../assets/coast-hero.png')} />
+  <Animated.Image source={require('../assets/coast-hero.png')} />
+  <ImageBackground source={require('../assets/coast-hero.png')} onLoad={() => {}}><Text>Hi</Text></ImageBackground>
+  <RNImage source={require('../assets/coast-hero.png')} />
+  {items.map(item => <AppImage key={item.id} source={require('../assets/coast-hero.png')} />)}
+  <AppImage {...rest} source={require('../assets/coast-hero.png')} />
+  {placement}
+</View>;
+export function Param(Picture: typeof AppImage) { return <Picture source={require('../assets/coast-hero.png')} />; }
+export const Inner = () => { const Here = AppImage; return <Here source={require('../assets/coast-hero.png')} />; };
+`);
+  const plan = await f.run([], false);
+  assert.equal(plan.code, 0, plan.stdout);
+  assert.match(plan.stdout, /Adopt src\/WrapScreen\.tsx:8 → wrap\.coast-hero \(1200×900\) through AssetlibPlacement/);
+  assert.match(plan.stdout, /Adopt src\/WrapScreen\.tsx:12 → wrap\.coast-hero \(1200×900\)\n/);
+  const result = await f.run(['--apply']);
+  assert.equal(result.code, 0, result.stdout);
+  assert.equal(result.report.summary.candidates, 7);
+  assert.equal(result.report.summary.placementsAdded, 1);
+  assert.deepEqual(result.report.candidates.map(item => item.component), ['AssetlibPlacement', 'AssetlibPlacement', 'AssetlibPlacement', 'AssetlibPlacement', 'AssetlibPlacement', 'AssetlibImage', 'AssetlibPlacement']);
+  assert.deepEqual(result.report.skipped.map(item => [item.line, item.reason]), [[14, 'spread-attributes'], [17, 'image-not-imported'], [18, 'image-not-imported']]);
+  assert.ok(result.report.notes.some(note => note.startsWith('6 call sites render through your own image component, so adopt wraps them in AssetlibPlacement (@assetlib/sdk-expo 0.7.12-preview.1 or newer)')), result.report.notes.join('\n'));
+  const changed = await f.get('src/WrapScreen.tsx');
+  assert.match(changed, /^import \{ AssetlibImage \} from "@assetlib\/sdk-expo";\nimport \{ AssetlibPlacement \} from "@assetlib\/sdk-expo";\n/m);
+  const delivery = `client={client} asset={AppAssets.Wrap.coastHero} fallback={require('../assets/coast-hero.png')}`;
+  assert.ok(changed.includes(`<AssetlibPlacement ${delivery}>{placement2 => <AppImage source={placement2.source} style={{ width: 90 }} cachePolicy="memory-disk" />}</AssetlibPlacement>`), changed);
+  assert.ok(changed.includes(`<AssetlibPlacement ${delivery}>{placement2 => <Local source={placement2.source}><View /></Local>}</AssetlibPlacement><AssetlibPlacement ${delivery}>{placement2 => <Frames.Photo source={placement2.source} />}</AssetlibPlacement>`), 'adjacent elements close before the next one opens');
+  assert.ok(changed.includes(`{placement2 => <Animated.Image source={placement2.source} onLoad={placement2.onLoad} onError={placement2.onError} onLayout={placement2.onLayout} />}`), 'a known image component receives the callbacks');
+  assert.ok(changed.includes(`<AssetlibPlacement ${delivery}>{placement2 => <ImageBackground source={placement2.source} onError={placement2.onError} onLayout={placement2.onLayout} onLoad={() => {}}><Text>Hi</Text></ImageBackground>}</AssetlibPlacement>`), 'an existing callback is kept and its children stay inside');
+  assert.ok(changed.includes(`<AssetlibImage ${delivery} />`), 'an aliased react-native Image becomes AssetlibImage');
+  assert.ok(changed.includes(`<AssetlibPlacement key={item.id} ${delivery}>{placement2 => <AppImage key={item.id} source={placement2.source} />}</AssetlibPlacement>`), 'a key moves to the outer element');
+  assert.ok(changed.includes(`<AppImage {...rest} source={require('../assets/coast-hero.png')} />`), 'a spread element is left alone');
+  syntax(changed);
+  await typecheckTransformed(f, 'src/WrapScreen.tsx');
+  assert.equal((await f.run()).code, 3, 'a second run finds nothing new');
+});

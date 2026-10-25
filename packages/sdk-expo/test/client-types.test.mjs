@@ -26,7 +26,7 @@ test('a template reference requires tintColor in TypeScript; other references do
   const temporary = await mkdtemp(fileURLToPath(new URL('./.client-types-', import.meta.url)));
   t.after(() => rm(temporary, { recursive: true, force: true }));
   const source = path.join(temporary, 'tint.tsx');
-  await writeFile(source, `import { AssetlibImage, AssetlibStateImage, type AssetClient, type AssetRef, type StateSetRef } from '@assetlib/sdk-expo';
+  await writeFile(source, `import { AssetlibImage, AssetlibPlacement, AssetlibStateImage, type AssetClient, type AssetRef, type StateSetRef } from '@assetlib/sdk-expo';
 declare const client: AssetClient;
 declare const widened: AssetRef;
 declare const widenedStates: StateSetRef;
@@ -41,6 +41,11 @@ export const views = [
   <AssetlibStateImage client={client} asset={AppAssets.Tabs.saved} state="idle" fallbacks={{ idle: 1, active: 2 }} tintColor="#1f1f1f" />,
   <AssetlibStateImage client={client} asset={AppAssets.Travel.garden} state="empty" fallbacks={{ empty: 1, grown: 2 }} />,
   <AssetlibStateImage client={client} asset={widenedStates} state="empty" fallbacks={{ empty: 1, grown: 2 }} />,
+  // The callbacks a placement hands out fit an expo-image Image, whatever component the app renders.
+  <AssetlibPlacement client={client} asset={AppAssets.Tabs.trips} fallback={1} tintColor="#1f1f1f" contentFit="contain">{placement => <AssetlibImage client={client} asset={AppAssets.Travel.coast} fallback={placement.source} tintColor={placement.tintColor} onLoad={placement.onLoad} onError={placement.onError} onLayout={placement.onLayout} {...placement.accessibility} />}</AssetlibPlacement>,
+  <AssetlibPlacement client={client} asset={AppAssets.Travel.coast} fallback={1}>{() => null}</AssetlibPlacement>,
+  // @ts-expect-error A template placement needs the app's tint color.
+  <AssetlibPlacement client={client} asset={AppAssets.Tabs.trips} fallback={1}>{() => null}</AssetlibPlacement>,
   // @ts-expect-error A template reference needs the app's tint color.
   <AssetlibImage client={client} asset={AppAssets.Tabs.trips} fallback={1} />,
   // @ts-expect-error A template state set needs the app's tint color.

@@ -40,6 +40,20 @@ A placement's width and height are a reference size: they fix the aspect ratio a
 
 `onStatus` reports source selection and verification, including the effective `arm` (`null` for control) and `armSource` (`explicit`, `decision`, `control`, or `invalid-decision`). Initial bundle and renderer-failure statuses use `arm: null` and `armSource: 'control'`; resolved statuses preserve the core's decision diagnostics. This callback is not a user impression or proof that the image was visible. Do not send experiment exposure events from this callback. App layout, accessibility labels, and refresh policy remain app-owned. Rendering uses `expo-image` for downloaded PNG/WebP support on iOS and Android; props follow Expo Image except `cachePolicy`, which controls Assetlib's verified byte retention. The renderer's independent cache is always disabled. Pending resolution is cancelled when a component unmounts or changes its asset request.
 
+## Your own image component
+
+When a screen draws artwork through the app's own image component (a wrapper around `Image`, `Animated.Image`, a library image), keep it and wrap the call site in `AssetlibPlacement`. Its child function receives the placement's current source, the bundled fallback until the verified image is ready and after any failure, plus the callbacks that keep it current:
+
+```tsx
+import { AssetlibPlacement } from '@assetlib/sdk-expo';
+
+<AssetlibPlacement client={client} asset={AppAssets.Travel.coast} fallback={require('./assets/coast.png')}>
+  {placement => <AppImage source={placement.source} onLoad={placement.onLoad} onError={placement.onError} onLayout={placement.onLayout} style={styles.hero} />}
+</AssetlibPlacement>
+```
+
+`placement.onLoad` reports the display once and `placement.onError` returns to the bundled fallback on a decode failure, so pass them when your component forwards them to its image; without them the image still shows, but displays are not reported and a failed decode does not return to the bundle. Without `placement.onLayout` the reference size × `PixelRatio.get()` is requested at once, often the largest tier; a forwarded layout replaces that estimate with the measured tier, which may be smaller, and from then on the tier only grows, as with `AssetlibImage`. `pixelWidth` and `pixelHeight` request exact pixels, and `contentFit` tells a forwarded layout how the image is fitted. Spread `placement.accessibility` onto the image: with `accessibilityMode="description"` it carries the delivered or bundled description, with `"decorative"` the props that hide the image from assistive technology. A tintable icon reference requires `tintColor`, which comes back as `placement.tintColor` for your component to apply. `appearance`, `arm`, `revision`, `cachePolicy` and `onStatus` work as on `AssetlibImage`. The child subtree is not remounted when the source changes, so a component that holds a form or a list keeps its state; a load event is attributed by the source it names. `assetlib adopt` writes this form for call sites whose tag is not the `Image` of `react-native` or `expo-image`, and wires the three callbacks for `ImageBackground` and `Animated.Image`.
+
 ## Appearance variants
 
 Declare `"variants": { "appearance": ["dark"] }` on a checked-in catalog placement and regenerate its reference to enable a dark cell. `AssetlibImage`, `AssetlibStateImage`, and `AssetlibDynamicImage` accept `appearance="light"`, `"dark"`, or `"system"` (the default). System mode reads React Native's `useColorScheme()`; a null scheme sends no appearance preference. A change in the effective appearance cancels the previous request and resolves again automatically.
@@ -239,7 +253,7 @@ await client.flush();
 client.dispose(); // Remove the AppState listener and stop observation timers.
 ```
 
-The adapter identifies itself as `sdk-expo` version `0.7.11-preview.1`. An explicit `telemetry.sdk` or `telemetry.build` takes precedence. When the runtime can optionally require `expo-application` or `expo-constants`, the adapter reads native app version and build number (falling back to Expo config version/build). Missing packages, unavailable runtime loaders, and throwing native bridges are ignored; no new dependency is required. Supply `build` explicitly for reliable production attribution, especially with bundlers that cannot resolve optional runtime requires or in Expo Go. Without complete runtime metadata or an explicit build, batches use platform `expo` and version/build `unknown`.
+The adapter identifies itself as `sdk-expo` version `0.7.12-preview.1`. An explicit `telemetry.sdk` or `telemetry.build` takes precedence. When the runtime can optionally require `expo-application` or `expo-constants`, the adapter reads native app version and build number (falling back to Expo config version/build). Missing packages, unavailable runtime loaders, and throwing native bridges are ignored; no new dependency is required. Supply `build` explicitly for reliable production attribution, especially with bundlers that cannot resolve optional runtime requires or in Expo Go. Without complete runtime metadata or an explicit build, batches use platform `expo` and version/build `unknown`.
 
 Only the observation contract fields are sent: environment, SDK name/version, build platform/version/number, random install ID, send time, and coalesced events with placement key, kind/count, source, asset ID/release sequence when known, effective arm/appearance when selected, and fallback reason. Bundle outcomes send only `fallback` events without asset ID or sequence. Dynamic catalog references do not emit observations because they have no placement key. Image bytes, descriptions, URLs, device identifiers, account identifiers, and status/error messages are not included.
 

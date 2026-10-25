@@ -140,10 +140,41 @@ function openingOf(attribute) {
   const opening = attribute?.parent?.parent;
   return opening && (ts.isJsxSelfClosingElement(opening) || ts.isJsxOpeningElement(opening)) ? opening : undefined;
 }
+const DELIVERY_COMPONENTS = ['AssetlibImage', 'AssetlibPlacement'];
 function alreadyAdopted(expression, info) {
   const opening = openingOf(jsxAttribute(expression));
   if (!opening || !ts.isIdentifier(opening.tagName)) return false;
-  return info.imports.some(item => item.module === '@assetlib/sdk-expo' && item.exported === 'AssetlibImage' && info.checker.getSymbolAtLocation(opening.tagName) === item.symbol) || opening.tagName.text === 'AssetlibImage';
+  const symbol = info.checker.getSymbolAtLocation(opening.tagName);
+  return info.imports.some(item => item.module === '@assetlib/sdk-expo' && DELIVERY_COMPONENTS.includes(item.exported) && symbol === item.symbol) || DELIVERY_COMPONENTS.includes(opening.tagName.text);
+}
+/** A declaration at module scope: not a parameter, and not inside a function or block. */
+function moduleScoped(symbol) {
+  return (symbol.declarations ?? []).some(declaration => {
+    for (let node = declaration; node.parent; node = node.parent) {
+      if (ts.isSourceFile(node.parent)) return true;
+      if (ts.isParameter(node) || ts.isBlock(node) || ts.isFunctionLike(node)) return false;
+    }
+    return false;
+  });
+}
+/**
+ * The placement belongs where the artwork is chosen, so the tag can be the named `Image` of react-native or expo-image
+ * (rewritten to AssetlibImage) or the app's own image component (an import or a module-scope declaration, also as a
+ * member such as Animated.Image), which keeps rendering as it is inside AssetlibPlacement.
+ */
+function componentOf(opening, info) {
+  let tag = opening.tagName;
+  while (ts.isPropertyAccessExpression(tag)) tag = tag.expression;
+  // A lower-case identifier tag is an intrinsic element, never a component.
+  if (!ts.isIdentifier(tag) || tag === opening.tagName && !/^[A-Z_$]/.test(tag.text)) return null;
+  const symbol = info.checker.getSymbolAtLocation(tag);
+  if (!symbol) return null;
+  const imported = info.imports.find(item => item.symbol === symbol);
+  const native = imported && ['react-native', 'expo-image'].includes(imported.module);
+  if (native && imported.exported === 'Image') return tag === opening.tagName ? 'image' : 'wrapper';
+  // Components known to take an Image's onLoad, onError and onLayout also receive the placement's callbacks.
+  if (native && (imported.exported === 'ImageBackground' && tag === opening.tagName || imported.exported === 'Animated' && imported.module === 'react-native' && opening.tagName.getText(info.source) === `${tag.text}.Image`)) return 'image-wrapper';
+  return imported || moduleScoped(symbol) ? 'wrapper' : null;
 }
 function reasonFor(call) {
   for (let node = call.parent; node && !ts.isSourceFile(node); node = node.parent) {
@@ -177,10 +208,13 @@ function findCandidate(call, info) {
   }
   const attribute = jsxAttribute(expression), opening = openingOf(attribute);
   if (!attribute || attribute.name.text !== 'source' || !opening) return { reason: reasonFor(expression) };
-  if (!ts.isIdentifier(opening.tagName) || opening.tagName.text !== 'Image' || !info.imports.some(item => ['react-native', 'expo-image'].includes(item.module) && item.exported === 'Image' && item.name.text === 'Image' && checker.getSymbolAtLocation(opening.tagName) === item.symbol)) return { reason: 'image-not-imported' };
+  const component = componentOf(opening, info);
+  if (!component) return { reason: 'image-not-imported' };
   if (opening.attributes.properties.some(ts.isJsxSpreadAttribute)) return { reason: 'spread-attributes' };
-  if (opening.attributes.properties.filter(item => ts.isJsxAttribute(item) && item.name.text === 'source').length !== 1 || opening.attributes.properties.some(item => ts.isJsxAttribute(item) && ['client', 'asset', 'fallback'].includes(item.name.text))) return { reason: 'attribute-conflict' };
+  if (opening.attributes.properties.filter(item => ts.isJsxAttribute(item) && item.name.text === 'source').length !== 1 || component === 'image' && opening.attributes.properties.some(item => ts.isJsxAttribute(item) && ['client', 'asset', 'fallback'].includes(item.name.text))) return { reason: 'attribute-conflict' };
   if (checker.getSymbolAtLocation(call.expression)) return { reason: 'shadowed-require' };
+  // The app's component keeps its own props, cache policy included; only its source changes.
+  if (component !== 'image') return { attribute, opening, expression, component };
   const policies = opening.attributes.properties.filter(item => ts.isJsxAttribute(item) && item.name.text === 'cachePolicy');
   if (policies.length > 1) return { reason: 'cache-policy' };
   let cacheLiteral;
@@ -189,7 +223,7 @@ function findCandidate(call, info) {
     cacheLiteral = initializer && ts.isJsxExpression(initializer) ? initializer.expression : initializer;
     if (!cacheLiteral || !ts.isStringLiteral(cacheLiteral) || !['memory-disk', 'disk', 'memory', 'none'].includes(cacheLiteral.text)) return { reason: 'cache-policy' };
   }
-  return { attribute, opening, expression, cacheLiteral };
+  return { attribute, opening, expression, cacheLiteral, component };
 }
 
 function words(value) { return value.replace(/([a-z0-9])([A-Z])/g, '$1-$2').split(/[^A-Za-z0-9]+/).filter(Boolean).map(word => word.toLowerCase()); }
@@ -227,14 +261,29 @@ function editSource(info, candidates, generated, clientModule, clientExport) {
     additions.push(exported === 'default' ? `import ${name} from ${quote(module)};` : `import { ${exported}${name !== exported ? ' as ' + name : ''} } from ${quote(module)};`);
     return name;
   }
-  const imageName = addImport('@assetlib/sdk-expo', 'AssetlibImage', 'AssetlibImage');
+  const imageName = candidates.some(item => item.component === 'image') ? addImport('@assetlib/sdk-expo', 'AssetlibImage', 'AssetlibImage') : null;
+  const placementName = candidates.some(item => item.component !== 'image') ? addImport('@assetlib/sdk-expo', 'AssetlibPlacement', 'AssetlibPlacement') : null;
   const assetsName = addImport(relativeImport(source.fileName, generated), 'AppAssets', 'AppAssets');
   const clientName = addImport(clientModule, clientExport, clientExport === 'default' ? 'client' : clientExport);
+  let parameter = 'placement', suffix = 2;
+  while (placementName && taken.has(parameter)) parameter = 'placement' + suffix++;
   for (const candidate of candidates) {
-    const { opening, attribute, expression, placement, cacheLiteral } = candidate;
+    const { opening, attribute, expression, placement, cacheLiteral, component } = candidate;
+    const delivery = `client={${clientName}} asset={${assetsName}.${placement.symbol.join('.')}} fallback={${expression.getText(source)}}`;
+    if (component !== 'image') {
+      // The app's component stays as it is inside AssetlibPlacement; a key moves out so list items stay keyed.
+      const element = ts.isJsxSelfClosingElement(opening) ? opening : opening.parent, start = element.getStart(source);
+      const key = opening.attributes.properties.find(item => ts.isJsxAttribute(item) && item.name.text === 'key');
+      const callbacks = component === 'image-wrapper' ? ['onLoad', 'onError', 'onLayout'].filter(name => !opening.attributes.properties.some(item => ts.isJsxAttribute(item) && item.name.text === name)) : [];
+      edits.push({ start, end: start, text: `<${placementName} ${key ? key.getText(source) + ' ' : ''}${delivery}>{${parameter} => ` });
+      edits.push({ start: attribute.getStart(source), end: attribute.end, text: [`source={${parameter}.source}`, ...callbacks.map(name => `${name}={${parameter}.${name}}`)].join(' ') });
+      // Applied after an insertion at the same position, so a closing tag precedes the next element's opening.
+      edits.push({ start: element.end, end: element.end, text: `}</${placementName}>`, order: 1 });
+      continue;
+    }
     edits.push({ start: opening.tagName.getStart(source), end: opening.tagName.end, text: imageName });
     if (ts.isJsxOpeningElement(opening)) edits.push({ start: opening.parent.closingElement.tagName.getStart(source), end: opening.parent.closingElement.tagName.end, text: imageName });
-    edits.push({ start: attribute.getStart(source), end: attribute.end, text: `client={${clientName}} asset={${assetsName}.${placement.symbol.join('.')}} fallback={${expression.getText(source)}}` });
+    edits.push({ start: attribute.getStart(source), end: attribute.end, text: delivery });
     if (cacheLiteral?.text === 'memory-disk') edits.push({ start: cacheLiteral.getStart(source), end: cacheLiteral.end, text: quote('disk') });
   }
   if (additions.length) {
@@ -248,7 +297,7 @@ function editSource(info, candidates, generated, clientModule, clientExport) {
     edits.push({ start: position, end: position, text: (position && !source.text.slice(0, position).endsWith('\n') ? newline : '') + additions.join(newline) + newline });
   }
   let text = source.text;
-  for (const edit of edits.sort((a, b) => b.start - a.start)) text = text.slice(0, edit.start) + edit.text + text.slice(edit.end);
+  for (const edit of edits.sort((a, b) => b.start - a.start || (a.order ?? 0) - (b.order ?? 0))) text = text.slice(0, edit.start) + edit.text + text.slice(edit.end);
   return text;
 }
 
@@ -372,10 +421,12 @@ export async function adopt({ catalogPath, catalog, src, generated: generatedOpt
         }
       }
       selected.push({ ...candidate, placement });
-      report.candidates.push({ ...location(call), image: slash(path.relative(root, image)), measured: slash(path.relative(root, largest.file)), key: placement.key, symbol: placement.symbol, ...size, reused: catalog.placements.includes(placement) });
+      report.candidates.push({ ...location(call), image: slash(path.relative(root, image)), measured: slash(path.relative(root, largest.file)), key: placement.key, symbol: placement.symbol, ...size, reused: catalog.placements.includes(placement), component: candidate.component === 'image' ? 'AssetlibImage' : 'AssetlibPlacement' });
     }
     if (selected.length) { originals.set(file, text); sourcePlans.push({ file, info, selected }); }
   }
+  const wrapped = report.candidates.filter(item => item.component === 'AssetlibPlacement').length;
+  if (wrapped) report.notes.push(`${wrapped} call site${wrapped === 1 ? '' : 's'} render${wrapped === 1 ? 's' : ''} through your own image component, so adopt wraps ${wrapped === 1 ? 'it' : 'them'} in AssetlibPlacement (@assetlib/sdk-expo 0.7.12-preview.1 or newer), which hands the component placement.source. ImageBackground and Animated.Image also receive placement.onLoad, placement.onError and placement.onLayout; pass them to any other component that forwards them to its image, so displays are reported, a failed decode returns to the bundled image, and the image's layout picks the rendition size.`);
   const plans = [];
   async function plan(file, after) {
     await safeDestination(root, file);
@@ -462,7 +513,7 @@ export async function adopt({ catalogPath, catalog, src, generated: generatedOpt
 export function formatAdoption(report) {
   const summary = report.summary;
   const lines = [`Assetlib adopt ${report.mode === 'apply' ? 'applied' : 'dry run'}`, `${summary.candidates} candidates; ${summary.placementsAdded} placements added; ${summary.placementsReused} existing placements reused; ${summary.skipped} skipped; ${summary.filesChanged} files ${report.mode === 'apply' ? 'changed' : 'would change'}.`];
-  for (const item of report.candidates) lines.push(`  Adopt ${item.path}:${item.line} → ${item.key} (${item.width}×${item.height}${item.measured === item.image ? '' : ' from ' + item.measured})`);
+  for (const item of report.candidates) lines.push(`  Adopt ${item.path}:${item.line} → ${item.key} (${item.width}×${item.height}${item.measured === item.image ? '' : ' from ' + item.measured})${item.component === 'AssetlibPlacement' ? ' through AssetlibPlacement' : ''}`);
   for (const item of report.skipped) lines.push(`  Skip ${item.path}:${item.line}: ${item.reason}${item.key ? ' (' + item.key + ')' : ''}`);
   for (const item of report.collisions) lines.push(`  Collision ${item.path}:${item.line}: ${item.originalKey} → ${item.key} (${item.symbol.join('.')})`);
   for (const item of report.issues) lines.push(`  Scan issue ${item.path}:${item.line}: ${item.reason}`);
