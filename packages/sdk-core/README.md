@@ -20,7 +20,7 @@ const asset = await client.resolve(AppAssets.Travel.coast, { pixelWidth: 600, pi
 // source is 'remote', 'cache', or 'bundle'. Render a bundled image for 'bundle'.
 ```
 
-`refresh()` returns `{ updated, sequence, error? }`. Errors preserve the previous accepted release. `resolve()` returns `{ source, sequence, message, arm, armSource, bytes?, sha256?, assetId?, mime?, pixelWidth?, pixelHeight?, rendering? }`. `getStatus()` returns `{ initialized, sequence, lastError }`. Use one long-lived client per configured app.
+`refresh()` returns `{ updated, sequence, error? }`. Errors preserve the previous accepted release. After a release is accepted, later refreshes send the service's `ETag` as `If-None-Match`, and a `304 Not Modified` returns `{ updated: false, sequence }` without downloading or re-verifying the manifest; the validator lives in client memory and is only sent while durable state still holds that exact release. `resolve()` returns `{ source, sequence, message, arm, armSource, bytes?, sha256?, assetId?, mime?, pixelWidth?, pixelHeight?, rendering? }`. `getStatus()` returns `{ initialized, sequence, lastError }`. Use one long-lived client per configured app.
 
 Public config: `{ schemaVersion: 1, orgId, appId, environment: 'staging' | 'production', manifestUrl, pinnedPublicKey?, keyId?, pinnedPublicKeys?, keyIds? }`. Supply `pinnedPublicKey` or a `pinnedPublicKeys` array of 1–16 distinct exact-PEM Ed25519 SPKI public keys. Each PEM is limited to 256 UTF-8 bytes. When both are present, the single key must exactly match a member of the set. Configurations with only `pinnedPublicKey` retain their existing behavior and parsed shape.
 

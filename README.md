@@ -24,7 +24,7 @@ Separate [Swift](https://github.com/AssetLib/sdk-swift) and [Kotlin](https://git
 Install the same exact version of core and Expo. The core package is precompiled; Expo consumes the adapter's Metro-ready source. Installing these packages does not request an Assetlib account or fetch a cloud catalog.
 
 ```sh
-npm install --save-exact @assetlib/sdk-core@0.7.10-preview.1 @assetlib/sdk-expo@0.7.10-preview.1
+npm install --save-exact @assetlib/sdk-core@0.7.11-preview.1 @assetlib/sdk-expo@0.7.11-preview.1
 npx expo install expo-file-system expo-image
 ```
 
@@ -32,8 +32,8 @@ The npm packages are the files attached to the GitHub release. To install from t
 
 ```sh
 npm install \
-  https://github.com/AssetLib/sdk-js/releases/download/v0.7.10-preview.1/assetlib-sdk-core-0.7.10-preview.1.tgz \
-  https://github.com/AssetLib/sdk-js/releases/download/v0.7.10-preview.1/assetlib-sdk-expo-0.7.10-preview.1.tgz
+  https://github.com/AssetLib/sdk-js/releases/download/v0.7.11-preview.1/assetlib-sdk-core-0.7.11-preview.1.tgz \
+  https://github.com/AssetLib/sdk-js/releases/download/v0.7.11-preview.1/assetlib-sdk-expo-0.7.11-preview.1.tgz
 ```
 
 The preview supports Expo SDK 54 to 57 (React Native 0.81 to 0.86) and React 19. Pin the installed versions in your application's lockfile. Check `SHA256SUMS` attached to the release when reviewing downloaded artifacts. The `assetlib` CLI is `@assetlib/cli` 0.4.7, also attached to the release as `assetlib-cli-0.4.7.tgz`; see the [CLI install steps](packages/cli/README.md#install).

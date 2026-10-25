@@ -136,7 +136,17 @@ class DeliveryError extends Error {
 }
 const failureReason = (error: unknown): FallbackReason => error instanceof DeliveryError ? error.reason : 'other';
 
+type BoundedResponse = { bytes: Uint8Array; etag: string | null; notModified: boolean };
+/** An ETag worth sending back: a quoted (optionally weak) validator of bounded length. Anything else is ignored. */
+const usableEtag = (value: string | null): string | null => value && /^(?:W\/)?"[^"]{1,200}"$/.test(value) ? value : null;
+
 async function fetchBounded(fetcher: typeof fetch, url: string, maxBytes: number, timeoutMs: number, accept = 'image/webp', signal?: AbortSignal, noStore = false): Promise<Uint8Array> {
+  return (await fetchBoundedResponse(fetcher, url, maxBytes, timeoutMs, accept, signal, noStore)).bytes;
+}
+
+/** Like fetchBounded, but with `ifNoneMatch` set the request is conditional and a 304 returns `notModified` without a body.
+    A 304 to an unconditional request is a server error and fails like any other non-2xx status. */
+async function fetchBoundedResponse(fetcher: typeof fetch, url: string, maxBytes: number, timeoutMs: number, accept = 'image/webp', signal?: AbortSignal, noStore = false, ifNoneMatch?: string): Promise<BoundedResponse> {
   throwIfAborted(signal);
   const controller = new AbortController();
   let timeout: ReturnType<typeof setTimeout> | undefined;
@@ -145,8 +155,9 @@ async function fetchBounded(fetcher: typeof fetch, url: string, maxBytes: number
   const cancelled = new Promise<never>((_, reject) => { abort = () => { controller.abort(); reject(new Error('Assetlib request cancelled.')); }; signal?.addEventListener('abort', abort, { once: true }); });
   const request = async () => {
     let response: Response;
-    try { response = await fetcher(url, { method: 'GET', credentials: 'omit', redirect: 'error', ...(noStore ? { cache: 'no-store' as const } : {}), signal: controller.signal, headers: { Accept: url.endsWith('/manifest') ? 'application/json' : accept } }); }
+    try { response = await fetcher(url, { method: 'GET', credentials: 'omit', redirect: 'error', ...(noStore ? { cache: 'no-store' as const } : {}), signal: controller.signal, headers: { Accept: url.endsWith('/manifest') ? 'application/json' : accept, ...(ifNoneMatch ? { 'If-None-Match': ifNoneMatch } : {}) } }); }
     catch (error) { throw new DeliveryError(error instanceof Error ? error.message : 'Assetlib delivery is unavailable.', 'offline'); }
+    if (ifNoneMatch && response.status === 304 && !response.redirected) { await response.body?.cancel().catch(() => {}); return { bytes: new Uint8Array(0), etag: usableEtag(response.headers.get('etag')), notModified: true }; }
     if (!response.ok || response.redirected) throw new DeliveryError(`Assetlib delivery returned ${response.status}.`, response.redirected ? 'verification' : response.status === 404 ? 'missing' : 'other');
     const declared = response.headers.get('content-length');
     if (declared && (!/^\d+$/.test(declared) || Number(declared) > maxBytes)) throw new DeliveryError('Response exceeds the SDK byte limit.', 'verification');
@@ -168,7 +179,7 @@ async function fetchBounded(fetcher: typeof fetch, url: string, maxBytes: number
     const bytes = new Uint8Array(size);
     let offset = 0;
     for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
-    return bytes;
+    return { bytes, etag: usableEtag(response.headers.get('etag')), notModified: false };
   };
   try { return await Promise.race([request(), deadline, cancelled]); }
   finally { if (timeout) clearTimeout(timeout); if (abort) signal?.removeEventListener('abort', abort); controller.abort(); }
@@ -222,6 +233,9 @@ export class AssetClient {
   private initialized = false;
   private storageFailure: string | null = null;
   private lastError: string | null = null;
+  /** The ETag the delivery service gave the envelope this client last accepted, so a later refresh can ask for it
+      conditionally. Held in memory only and sent only while the durable state still holds that exact release. */
+  private manifestEtag: { etag: string; sequence: number; payload: string } | null = null;
   private lastRefreshReason: FallbackReason = 'missing';
   private reporter?: ObservationReporter;
   private queue: Promise<unknown> = Promise.resolve();
@@ -305,14 +319,23 @@ export class AssetClient {
       await this.load();
       try {
         if (this.storageFailure) throw new DeliveryError(this.storageFailure, 'verification');
-        const bytes = await fetchBounded(this.fetcher, this.config.manifestUrl, SDK_LIMITS.manifestBytes, this.timeoutMs);
+        const current = this.state.history[0];
+        const known = this.manifestEtag && current && this.manifestEtag.sequence === this.state.highestSequence && this.manifestEtag.payload === current.payload ? this.manifestEtag : null;
+        const fetched = await fetchBoundedResponse(this.fetcher, this.config.manifestUrl, SDK_LIMITS.manifestBytes, this.timeoutMs, undefined, undefined, false, known?.etag);
+        if (fetched.notModified) {
+          // The service confirmed the accepted release is still current. Nothing was downloaded or re-verified.
+          this.lastError = null;
+          return { updated: false, sequence: this.state.highestSequence };
+        }
         let verified: ReturnType<typeof verifySignedManifest>;
-        try { verified = verifySignedManifest(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)), this.config); }
+        try { verified = verifySignedManifest(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(fetched.bytes)), this.config); }
         catch (error) { throw new DeliveryError(error instanceof Error ? error.message : 'Manifest verification failed.', 'verification'); }
         const { envelope, payload } = verified;
+        const remember = () => { this.manifestEtag = fetched.etag ? { etag: fetched.etag, sequence: payload.sequence, payload: envelope.payload } : null; };
         if (payload.sequence < this.state.highestSequence) throw new DeliveryError('An older release was rejected.', 'verification');
         if (payload.sequence === this.state.highestSequence) {
-          if (envelope.payload !== this.state.history[0]?.payload) throw new DeliveryError('Conflicting content reused an existing release sequence.', 'verification');
+          if (envelope.payload !== current?.payload) throw new DeliveryError('Conflicting content reused an existing release sequence.', 'verification');
+          remember();
           this.lastError = null;
           return { updated: false, sequence: payload.sequence };
         }
@@ -323,6 +346,7 @@ export class AssetClient {
         await this.options.storage.saveState(serialized);
         // Nothing may throw between these: state, payloads and adoptedRaw describe one history.
         this.state = next; this.payloads = payloads; this.adoptedRaw = serialized;
+        remember();
         this.lastError = null;
         return { updated: true, sequence: payload.sequence };
       } catch (error) {

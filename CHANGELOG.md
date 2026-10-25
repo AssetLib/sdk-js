@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.11-preview.1 — October 25, 2026
+
+- `@assetlib/sdk-core` 0.7.11-preview.1: `refresh()` is conditional after the first accepted release. The client keeps, in memory only, the `ETag` the delivery service sent with the envelope it last accepted, and sends it as `If-None-Match` on later refreshes while its durable state still holds exactly that release; a `304 Not Modified` returns `{ updated: false, sequence }` with nothing downloaded or re-verified. A 200 is handled as before, and a 304 to a request that sent no validator is an error like any other unexpected status. Nothing changes in durable state, the signed contract or the native SDKs. The hosted console answers these requests with 304 from the same release. Checked with new core tests (conditional send, 304 as the same release, new ETag after a new release, equivocation never remembered, a shared-storage client that moved ahead goes unconditional, malformed and oversized validators ignored) and `npm run verify`.
+- `@assetlib/sdk-expo` changes only its version. `@assetlib/cli` 0.4.7 and `@assetlib/audit` 0.2.1 are unchanged.
+
 ## 0.7.10-preview.1 — October 23, 2026
 
 - `@assetlib/cli` 0.4.7: `init` now tells coding agents how to connect to the workspace's Assetlib MCP server with Claude or Codex, using the public config's origin when present. The section `adopt` and `init` write in `AGENTS.md` also points agents at the MCP server to read placements, code references and release history and to upload and assign images as a draft. Agents never publish; publishing stays in the console. The `init` next steps now use the console's checklist names: "Register your placements", "Run your app" and "Publish an image change". Checked with new `init` and `adopt` tests and `npm run verify`.
